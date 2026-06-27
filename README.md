@@ -28,21 +28,59 @@ generic CalDAV client pointed at a self-hosted **Radicale** server on `127.0.0.1
 Proton Calendar. Reviewed: **ProtonBound 0.1.0**, `protonmail-pro-mcp` **1.0.0**, `proton-mcp`
 **1.0.0**, `proton-bridge-mcp` (no version tag).
 
+**Platform**
+
 | | **ProtonBound** | protonmail-pro-mcp | proton-mcp | proton-bridge-mcp |
 |---|---|---|---|---|
 | Stack | Python | Node / TS | Node / JS | Python |
 | Proton transport | Bridge IMAP only | Bridge IMAP + remote SMTP | Bridge IMAP + SMTP | Bridge IMAP + SMTP |
+
+**Security model**
+
+| | **ProtonBound** | protonmail-pro-mcp | proton-mcp | proton-bridge-mcp |
+|---|---|---|---|---|
 | **Can send mail** | **No — no SMTP, enforced by a test** | ⚠️ Yes | ⚠️ Yes | ⚠️ Yes |
-| **Scoped access** (deny-by-default folders / addresses / starred) | **Yes** | No — full mailbox | No — full mailbox | No — full mailbox |
 | **Human review before send** | **Yes — drafts only** | ⚠️ No — sends directly | ⚠️ No — sends directly | ⚠️ No — sends directly |
-| **Destructive ops** | Drafts only; delete is opt-in (→ Trash) | ⚠️ **Permanent delete** | Delete mail | Delete / move / flag (each requires `acknowledged=true`) |
-| **Reads password vault / TOTP** | No | No | ⚠️ **Yes** (`pass__get_item` / `get_totp`) | No |
-| **Credential storage** | **OS keyring** (`keyring` package — macOS/Windows/Linux) or env var | ⚠️ Account creds → remote SMTP | Bridge password + pass-cli | macOS Keychain only (`/usr/bin/security`) or env var |
-| Attachments | Read + re-attach from in-scope mail; local-file opt-in, size cap | Send with attachments | Read attachments | Read + download to disk (requires `acknowledged=true`) |
+| **Scoped access** (deny-by-default folders / addresses / starred) | **Yes** | No — full mailbox | No — full mailbox | No — full mailbox |
 | **Per-workspace isolation** | **Yes — one scope per process** | No | No | No |
-| **TLS cert pinning** for Bridge connection | **Yes** — explicit SHA-256 pin in config (`bridge_cert_sha256`); opt-in but a hard match when set; use `--show-cert` to capture | ⚠️ No | ⚠️ No | Yes — automatic TOFU: cert captured on first connection and stored; on by default but vulnerable if first run is already intercepted |
 | **Opaque message ids** (session-scoped whitelist, CRC-verified) | **Yes** | No | No | No |
 | **Body fencing** (untrusted content labelled, boundary defanged) | **Yes** | No | No | No |
+
+**Credentials & connection**
+
+| | **ProtonBound** | protonmail-pro-mcp | proton-mcp | proton-bridge-mcp |
+|---|---|---|---|---|
+| **TLS cert pinning** for Bridge connection | **Yes** — explicit SHA-256 pin in config (`bridge_cert_sha256`); opt-in but a hard match when set; use `--show-cert` to capture | ⚠️ No | ⚠️ No | Yes — automatic TOFU: cert captured on first connection and stored; on by default but vulnerable if first run is already intercepted |
+| **Credential storage** | **OS keyring** (`keyring` package — macOS/Windows/Linux) or env var | ⚠️ Account creds → remote SMTP | Bridge password + pass-cli | macOS Keychain only (`/usr/bin/security`) or env var |
+| **Reads password vault / TOTP** | No | No | ⚠️ Yes (`pass__get_item` / `get_totp`) | No |
+
+**Destructive operations**
+
+| | **ProtonBound** | protonmail-pro-mcp | proton-mcp | proton-bridge-mcp |
+|---|---|---|---|---|
+| **Delete** | Opt-in; moves to Trash | ⚠️ Permanent delete | Delete mail | Requires `acknowledged=true` |
+| **Other mutations** | Draft save/update only | — | — | Move / flag; each requires `acknowledged=true` |
+
+**Attachments**
+
+| | **ProtonBound** | protonmail-pro-mcp | proton-mcp | proton-bridge-mcp |
+|---|---|---|---|---|
+| Read attachment list (metadata to LLM) | Yes | Unknown | Yes | Yes |
+| Attachment content to LLM | **Opt-in**, size-capped | Unknown | Yes | Yes (requires `acknowledged=true`) |
+| Re-attach to draft without LLM pass-through | **Yes — in-scope mail only** | No | No | No |
+| Attach local files to draft | **Opt-in**, size-capped | Yes | Unknown | Unknown |
+
+**Email processing**
+
+| | **ProtonBound** | protonmail-pro-mcp | proton-mcp | proton-bridge-mcp |
+|---|---|---|---|---|
+| Thread-centric API (list → get_thread → get_message) | **Yes** | No | No | No |
+| Thread folding + quote de-duplication | **Yes** — repeated quoted text collapses; edited quotes preserved | No | No | No |
+| HTML → Markdown conversion | **Yes** | Unknown | Unknown | Unknown |
+| Header-only fetch for listing | **Yes** | Unknown | Unknown | Unknown |
+| Persistent connection with idle probe | **Yes** — reused; NOOP probe only after 30 s idle | Unknown | Unknown | Yes — asyncio, auto-reconnect |
+| Loopback socket tuning (TCP_NODELAY, SO_RCVBUF) | **Yes** | No | No | Unknown |
+| Concurrent tool call safety | **Yes** — threading.RLock serialises IMAP ops | Unknown | Unknown | Yes — asyncio lock |
 
 **Why the security columns matter.** Every email body is attacker-controlled text, so an
 agent reading your mail can be steered by a malicious message (*prompt injection*) into using
