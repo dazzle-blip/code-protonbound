@@ -94,23 +94,93 @@ def test_send_tool_warns_about_injection():
     assert "confirmation" in desc or "confirm" in desc
 
 
+def test_deleted_smtp_module_disables_send_despite_allow_smtp():
+    """Hard kill-switch: with smtp.py absent, send is disabled even if allow_smtp is true."""
+
+    from unittest.mock import patch
+
+    import protonbound.server as server_mod
+
+    ws = _workspace(Permission.read_write, allow_smtp=True)
+    with patch.object(server_mod, "_smtp_module_available", return_value=False):
+        names = {t.name for t in asyncio.run(build_server(ws).list_tools())}
+    assert "send_outbound_email" not in names
+
+
+def test_instructions_reflect_effective_send_capability():
+    """can_send (allow_smtp AND module present), not the raw flag, drives the boundary text."""
+
+    ws = _workspace(Permission.read_write, allow_smtp=True)
+    assert "can NEVER send mail" in _workspace_instructions(ws, can_send=False)
+    assert "CAN send mail" in _workspace_instructions(ws, can_send=True)
+
+
+def test_building_send_enabled_server_does_not_import_smtplib():
+    """allow_smtp=True registers the tool via a find_spec presence check, which must NOT
+    import smtplib — that import is deferred to an actual send call. Checked in a fresh
+    subprocess so the result is not polluted by other tests importing protonbound.smtp."""
+
+    import subprocess
+    import sys
+    import textwrap
+
+    script = textwrap.dedent(
+        """
+        import asyncio
+        import sys
+        from pathlib import Path
+        from protonbound.config import (
+            AccountConfig, MailConfig, Permission, ScopeConfig, Workspace,
+            WorkspaceMeta, WriteTargets,
+        )
+        from protonbound.server import build_server
+
+        ws = Workspace(
+            meta=WorkspaceMeta(
+                name="t", description="d",
+                account=AccountConfig(username="me@proton.me"),
+            ),
+            mail=MailConfig(
+                permission=Permission.read_write,
+                scope=ScopeConfig(sources=["Folders/X"]),
+                write_targets=WriteTargets(drafts="Drafts", trash="Trash"),
+                allow_smtp=True,
+            ),
+            path=Path("."),
+        )
+        server = build_server(ws)
+        names = {t.name for t in asyncio.run(server.list_tools())}
+        assert "send_outbound_email" in names, names
+        assert "smtplib" not in sys.modules, "smtplib imported just by building the server"
+        assert "protonbound.smtp" not in sys.modules, "smtp.py imported at build time"
+        """
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", script], capture_output=True, text=True
+    )
+    assert result.returncode == 0, result.stderr
+
+
 def test_instructions_advertise_operational_limits():
     """Read-write limits are stated up front so the model doesn't attempt doomed calls."""
 
-    text = _workspace_instructions(_workspace(Permission.read_write, allow_delete=False))
+    text = _workspace_instructions(
+        _workspace(Permission.read_write, allow_delete=False), can_send=False
+    )
     assert "No delete tool" in text
     assert "attaching LOCAL files by path is disabled" in text
     assert "only target the readable sources" in text
 
     enabled = _workspace_instructions(
-        _workspace(Permission.read_write, allow_delete=True, allow_local_attachments=True)
+        _workspace(Permission.read_write, allow_delete=True, allow_local_attachments=True),
+        can_send=False,
     )
     assert "delete_message moves to Trash" in enabled
     assert "attaching a LOCAL file by path is allowed" in enabled
 
 
 def test_readonly_instructions_omit_write_limits():
-    text = _workspace_instructions(_workspace(Permission.readonly))
+    text = _workspace_instructions(_workspace(Permission.readonly), can_send=False)
     assert "Attachments:" not in text
     assert "delete" not in text.lower()
 

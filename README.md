@@ -33,61 +33,46 @@ Other Proton MCP servers exist. This comparison is **Proton-only and security-fi
 ignores features that don't actually talk to Proton — e.g. `proton-mcp`'s "Calendar" is a
 generic CalDAV client pointed at a self-hosted **Radicale** server on `127.0.0.1:5232`, not
 Proton Calendar. Reviewed: **ProtonBound 0.1.0**, `protonmail-pro-mcp` **1.0.0**, `proton-mcp`
-**1.0.0**, `proton-bridge-mcp` (no version tag).
+**1.0.0**, `proton-bridge-mcp` (no version tag), `protonmail-mcp` (`darkroomdevs/protonmail-mcp`).
 
-**Platform**
+> **On `protonmail-pro-mcp`:** the upstream `anyrxo/protonmail-pro-mcp` ("The IImagined
+> Collective") publishes only a scaffold — its `src/index.ts` is an architectural stub that
+> omits the tool handlers (*"the full tool handler implementation is available in the complete
+> source code"*), and the package is not on npm (registry 404). The behaviour tabulated here
+> is from the one complete public implementation, the `chenasraf/protonmail-pro-mcp` fork.
 
-| | **ProtonBound** | protonmail-pro-mcp | proton-mcp | proton-bridge-mcp |
-|---|---|---|---|---|
-| Stack | Python | Node / TS | Node / JS | Python |
-| Proton transport | Bridge IMAP only | Bridge IMAP + remote SMTP | Bridge IMAP + SMTP | Bridge IMAP + SMTP |
-
-**Security model**
-
-| | **ProtonBound** | protonmail-pro-mcp | proton-mcp | proton-bridge-mcp |
-|---|---|---|---|---|
-| **Can send mail** | **No by default** — `allow_smtp: false`; `smtp.py` never imported, send tool never registered. Opt-in with `allow_smtp: true`. | ⚠️ Yes | ⚠️ Yes | ⚠️ Yes |
-| **Human review before send** | **Yes — drafts only** | ⚠️ No — sends directly | ⚠️ No — sends directly | ⚠️ No — sends directly |
-| **Scoped access** (deny-by-default folders / addresses / starred) | **Yes** | No — full mailbox | No — full mailbox | No — full mailbox |
-| **Per-workspace isolation** | **Yes — one scope per process** | No | No | No |
-| **Opaque message ids** (session-scoped whitelist, CRC-verified) | **Yes** | No | No | No |
-| **Body fencing** (untrusted content labelled, boundary defanged) | **Yes** | No | No | No |
-
-**Credentials & connection**
-
-| | **ProtonBound** | protonmail-pro-mcp | proton-mcp | proton-bridge-mcp |
-|---|---|---|---|---|
-| **TLS cert pinning** for Bridge connection | **Yes** — explicit SHA-256 pin in config (`bridge_cert_sha256`); opt-in but a hard match when set; use `--show-cert` to capture | ⚠️ No | ⚠️ No | Yes — automatic TOFU: cert captured on first connection and stored; on by default but vulnerable if first run is already intercepted |
-| **Credential storage** | **OS keyring** (`keyring` package — macOS/Windows/Linux) or env var | ⚠️ Account creds → remote SMTP | Bridge password + pass-cli | macOS Keychain only (`/usr/bin/security`) or env var |
-| **Reads password vault / TOTP** | No | No | ⚠️ Yes (`pass__get_item` / `get_totp`) | No |
-
-**Destructive operations**
-
-| | **ProtonBound** | protonmail-pro-mcp | proton-mcp | proton-bridge-mcp |
-|---|---|---|---|---|
-| **Delete** | Opt-in; moves to Trash | ⚠️ Permanent delete | Delete mail | Requires `acknowledged=true` |
-| **Other mutations** | Draft save/update only | — | — | Move / flag; each requires `acknowledged=true` |
-
-**Attachments**
-
-| | **ProtonBound** | protonmail-pro-mcp | proton-mcp | proton-bridge-mcp |
-|---|---|---|---|---|
-| Read attachment list (metadata to LLM) | Yes | Yes | Yes | Yes |
-| Attachment content to LLM | **Opt-in**, size-capped | Yes (bundled with send) | Yes — base64-encoded inline | Explicit download tool only (requires `acknowledged=true`) |
-| Re-attach to draft without LLM pass-through | **Yes — in-scope mail only** | No | No | No |
-| Attach local files to draft | **Opt-in**, size-capped | Yes | No | No — download to disk only |
-
-**Email processing**
-
-| | **ProtonBound** | protonmail-pro-mcp | proton-mcp | proton-bridge-mcp |
-|---|---|---|---|---|
-| Thread-centric API (list → get_thread → get_message) | **Yes** | No | No — threading metadata only; no server-side grouping | No — In-Reply-To/References passed as raw fields |
-| Thread folding + quote de-duplication | **Yes** — repeated quoted text collapses; edited quotes preserved | No | No | No |
-| HTML → Markdown conversion | **Yes** | Source not public | No — returns `mail.text` or raw HTML as-is | No — HTML returned as-is |
-| Header-only fetch for listing | **Yes** | Source not public | Yes — uses `'HEADER'` param for listings | Yes — `BODY.PEEK[HEADER.FIELDS ...]` for listings |
-| Persistent connection with idle probe | **Yes** — reused; NOOP probe only after 30 s idle | Source not public | No — new connection per operation | Yes — long-lived; NOOP before each reuse |
-| Loopback socket tuning (TCP_NODELAY, SO_RCVBUF) | **Yes** | No | No | No |
-| Concurrent tool call safety | **Yes** — `threading.RLock` serialises IMAP ops | Source not public | Sequential — no parallelism within a request | Yes — `asyncio.Lock` per connection |
+| | **ProtonBound** | protonmail-pro-mcp | proton-mcp | proton-bridge-mcp | protonmail-mcp |
+|---|---|---|---|---|---|
+| **▌ Platform** | | | | | |
+| Stack | Python | Node / TS | Node / JS | Python | Node / TS |
+| Proton transport | Bridge IMAP + SMTP (send opt-in) | Bridge IMAP + remote SMTP | Bridge IMAP + SMTP | Bridge IMAP + SMTP | Bridge IMAP + SMTP |
+| **▌ Security model** | | | | | |
+| Can send mail | **No by default** — opt-in `allow_smtp`; until enabled `smtp.py` is never imported and the send tool is unregistered, and even when enabled each send requires explicit human confirmation | ⚠️ Yes | ⚠️ Yes | ⚠️ Yes | ⚠️ Yes |
+| Composes drafts, not direct sends | **Yes** — replies and new mail are saved to your Drafts for you to review and send from Proton | ⚠️ No — sends directly | ⚠️ No — sends directly | ⚠️ No — sends directly | ⚠️ No — sends directly |
+| Scoped access (deny-by-default folders / addresses / starred) | **Yes** | No — full mailbox | No — full mailbox | No — full mailbox | No — full mailbox |
+| Per-workspace isolation | **Yes — one scope per process** | No | No | No | No |
+| Opaque message ids (session-scoped whitelist, CRC-verified) | **Yes** | No | No | No | No — raw IMAP UIDs exposed |
+| Body fencing (untrusted content labelled, boundary defanged) | **Yes** | No | No | No | No |
+| **▌ Credentials & connection** | | | | | |
+| TLS cert pinning for Bridge connection | **Yes** — explicit SHA-256 pin in config (`bridge_cert_sha256`), enforced on both the IMAP and SMTP connections; opt-in but a hard match when set; use `--show-cert` to capture | ⚠️ No | ⚠️ No | Yes — automatic TOFU: cert captured on first connection and stored; on by default but vulnerable if first run is already intercepted | ⚠️ No |
+| Credential storage | **OS keyring** (`keyring` package — macOS/Windows/Linux) or env var | ⚠️ Account creds → remote SMTP | Bridge password + pass-cli | macOS Keychain only (`/usr/bin/security`) or env var | Env vars (`PROTONMAIL_USERNAME` / `PROTONMAIL_PASSWORD`) |
+| Reads password vault / TOTP | No | No | ⚠️ Yes (`pass__get_item` / `get_totp`) | No | No |
+| **▌ Destructive operations** | | | | | |
+| Delete | Opt-in; moves to Trash | ⚠️ Permanent delete | Delete mail | Requires `acknowledged=true` | Via `bulkAction`; `dryRun: true` preview default |
+| Other mutations | Draft save/update only | — | — | Move / flag; each requires `acknowledged=true` | Move / label / read-flags via `bulkAction` (dryRun default) |
+| **▌ Attachments** | | | | | |
+| Read attachment list (metadata to LLM) | Yes | Yes | Yes | Yes | Yes |
+| Attachment content to LLM | **Opt-in**, size-capped | Yes (bundled with send) | Yes — base64-encoded inline | Explicit download tool only (requires `acknowledged=true`) | No — metadata only (filename/type/size) |
+| Re-attach to draft without LLM pass-through | **Yes — in-scope mail only** | No | No | No | No — no drafts |
+| Attach local files to draft | **Opt-in**, size-capped | Yes | No | No — download to disk only | Sends with attachments (no draft step) |
+| **▌ Email processing** | | | | | |
+| Thread-centric API (list → get_thread → get_message) | **Yes** | No | No — threading metadata only; no server-side grouping | No — In-Reply-To/References passed as raw fields | No — flat list sorted by UID |
+| Thread folding + quote de-duplication | **Yes** — repeated quoted text collapses; edited quotes preserved | No | No | No | No |
+| HTML → Markdown conversion | **Yes** | No — `simpleParser` text + raw HTML | No — returns `mail.text` or raw HTML as-is | No — HTML returned as-is | No — `simpleParser` text + raw HTML |
+| Header-only fetch for listing | **Yes** | No — fetches full `source` and parses every listing | Yes — uses `'HEADER'` param for listings | Yes — `BODY.PEEK[HEADER.FIELDS ...]` for listings | Yes — `headersOnly` fetches envelope only |
+| Persistent connection with idle probe | **Yes** — reused; NOOP probe only after 30 s idle | Yes — long-lived `ImapFlow` client; no idle probe | No — new connection per operation | Yes — long-lived; NOOP before each reuse | Yes — long-lived `ImapFlow` (`usable` check); no idle probe |
+| Loopback socket tuning (TCP_NODELAY, SO_RCVBUF) | **Yes** | No | No | No | No |
+| Concurrent tool call safety | **Yes** — `threading.RLock` serialises IMAP ops | Per-mailbox lock (`getMailboxLock`) via ImapFlow | Sequential — no parallelism within a request | Yes — `asyncio.Lock` per connection | Per-mailbox lock (`getMailboxLock`) via ImapFlow |
 
 **Why the security columns matter.** Every email body is attacker-controlled text, so an
 agent reading your mail can be steered by a malicious message (*prompt injection*) into using
@@ -107,8 +92,10 @@ whatever tools it holds. ProtonBound is built to make a hijacked agent harmless:
 The others are more capable — autonomous send, and in `proton-mcp`'s case read access to your
 password vault — but that capability *is* the blast radius an injected instruction can abuse.
 `proton-bridge-mcp` shares the Python/IMAP approach and adds TLS cert pinning (TOFU-style),
-but retains full SMTP send and no folder-level scope controls. ProtonBound deliberately trades
-breadth for a tight, auditable security boundary.
+but retains full SMTP send and no folder-level scope controls. `protonmail-mcp` (darkroomdevs)
+is another full-mailbox Bridge server — direct send, raw IMAP UIDs, no scoping — though it
+does default bulk operations to a `dryRun` preview. ProtonBound deliberately trades breadth
+for a tight, auditable security boundary.
 
 ## How scope works
 
@@ -322,6 +309,35 @@ prompt-injection instructions designed to trigger sends.
 
 Bridge SMTP connection settings default to `127.0.0.1:1025` and can be overridden under
 `account:` with `smtp_host` / `smtp_port`.
+
+### Hard kill-switch: delete the send module
+
+For a guarantee that doesn't depend on config at all, **delete the send module**:
+
+```bash
+rm src/protonbound/smtp.py
+```
+
+`smtp.py` is the *only* file in the package that imports `smtplib`. With it gone there is no
+send code to run, so sending is structurally impossible regardless of any `allow_smtp`
+setting — a stronger statement than a config flag, since it can't be flipped back by editing
+YAML.
+
+The server is built to treat this as a supported state, not a crash:
+
+- At startup it checks for the module with `importlib.util.find_spec` — which *locates*
+  without *importing*, so the check itself never pulls in `smtplib`. If the module is absent,
+  the server runs **exactly as if `allow_smtp: false`**: the send tool is not registered, the
+  agent-facing instructions say it can never send, and `get_workspace_info` reports
+  `can_send: false`.
+- If a workspace still has `allow_smtp: true` while the module is gone, the server starts
+  normally and prints a one-line notice on **stderr** explaining that sending is disabled.
+- If the file is removed *while the server is running*, an attempted send fails closed with a
+  clear `PermissionError` rather than a raw `ModuleNotFoundError`.
+
+To restore sending, put `smtp.py` back (e.g. `git checkout -- src/protonbound/smtp.py`) and
+restart. This makes a third, **physical** layer beneath the registration gate and runtime
+guard above.
 
 ## Inspection CLI
 

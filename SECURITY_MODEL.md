@@ -38,7 +38,16 @@ touches `smtplib` — is lazily imported. Even then a runtime `PermissionError` 
 first line of the send function, so the boundary holds even if a future refactor broke the
 registration gate. When enabled, the SMTP transport pins Bridge's TLS cert after STARTTLS and
 fails closed before credentials are sent (see #9).
-*Where:* `src/protonbound/server.py` (conditional `send_outbound_email` registration + in-function guard); `src/protonbound/smtp.py` (lazy `smtplib`, cert pin); `tests/test_tool_surface.py::test_only_smtp_module_imports_smtplib`, `::test_smtplib_not_loaded_with_smtp_disabled`, `::test_send_runtime_guard_raises_if_smtp_disabled`.
+
+For a guarantee independent of config, the owner can **physically delete `smtp.py`** (the sole
+module importing `smtplib`). The server detects its absence at startup via
+`importlib.util.find_spec` — which locates without importing, so the check never pulls in
+`smtplib` — and then runs exactly as if `allow_smtp: false`: the send tool is unregistered,
+`can_send` is reported false, and the instructions advertise never-sends, even if the YAML
+still says `allow_smtp: true` (a one-line stderr notice flags the mismatch). With no module
+present there is simply no send code in the package; this is a stronger, **non-config** kill
+switch that an injected instruction or a YAML edit cannot undo.
+*Where:* `src/protonbound/server.py` (`_smtp_module_available` presence check, conditional `send_outbound_email` registration + in-function guard); `src/protonbound/smtp.py` (lazy `smtplib`, cert pin); `tests/test_tool_surface.py::test_only_smtp_module_imports_smtplib`, `::test_smtplib_not_loaded_with_smtp_disabled`, `::test_deleted_smtp_module_disables_send_despite_allow_smtp`, `::test_building_send_enabled_server_does_not_import_smtplib`.
 
 ### 2. Reads and writes are deny-by-default scoped
 A message is in scope only if it lives in an allowed source mailbox **and** (if configured)
