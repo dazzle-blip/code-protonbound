@@ -27,7 +27,7 @@ _SAFE_NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]*")
 
 
 class Permission(str, Enum):
-    """Mail permission tiers. There is intentionally no send tier."""
+    """Mail permission tiers. Sending is a separate opt-in (allow_smtp on MailConfig)."""
 
     readonly = "readonly"
     read_write = "read-write"
@@ -38,7 +38,9 @@ class AccountConfig(BaseModel):
 
     imap_host: str = "127.0.0.1"
     imap_port: int = 1143
-    # The Bridge IMAP login (the primary account address). Same across all workspaces.
+    smtp_host: str = "127.0.0.1"
+    smtp_port: int = 1025
+    # The Bridge IMAP/SMTP login (the primary account address). Same across all workspaces.
     username: str
     # Default sender identity for newly composed drafts. Use this to draft *as* an alias
     # rather than the primary account. If unset, falls back to `username`. Replies prefer
@@ -110,6 +112,11 @@ class MailConfig(BaseModel):
     allow_local_attachments: bool = False
     # Per-attachment size ceiling in megabytes (Proton's own message limit is ~25 MB total).
     max_attachment_mb: int = Field(default=25, gt=0)
+    # Enable outbound SMTP send via Bridge. Off by default: when False, smtplib is never
+    # imported and the send tool is never registered, so the agent is structurally blind to
+    # any send capability. Set True only in workspaces where human-supervised sending is
+    # intentional and accepted.
+    allow_smtp: bool = False
 
     @model_validator(mode="after")
     def _require_targets(self) -> MailConfig:

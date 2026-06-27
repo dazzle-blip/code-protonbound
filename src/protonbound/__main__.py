@@ -81,6 +81,18 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Print Proton Bridge's TLS cert SHA-256 fingerprint (for pinning), then exit.",
     )
+    parser.add_argument(
+        "--inspect",
+        nargs=argparse.REMAINDER,
+        metavar="CMD [ARGS...]",
+        help=(
+            "Launch the developer inspection CLI instead of the MCP server. "
+            "Shows the exact tool payloads the LLM receives, including "
+            "<untrusted-email-content> fencing and opaque message tokens. "
+            "Omit CMD for an interactive REPL; add --raw for bare JSON output. "
+            "Example: --inspect search 'invoice'  or  --inspect threads --limit 5"
+        ),
+    )
     args = parser.parse_args(argv)
 
     if not args.workspace:
@@ -97,6 +109,10 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.show_cert:
         return _show_cert(workspace)
+
+    if args.inspect is not None:
+        from .inspector import run_inspect
+        return run_inspect(workspace, list(args.inspect))
 
     server = build_server(workspace)
     server.run()  # stdio transport by default

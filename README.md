@@ -1,11 +1,13 @@
 # ProtonBound
 
-A lightweight **MCP server** that gives an AI agent a **scoped, read-and-draft-only** view
-into your Proton Mail through **Proton Bridge**.
+A lightweight **MCP server** that gives an AI agent a **scoped, draft-first** view into
+your Proton Mail through **Proton Bridge**.
 
 The scope is enforced in code, not by prompting: the agent physically cannot read or touch
-mail outside the workspace you configure, and **it can never send** — replies are saved as
-drafts for you to review and send yourself in Proton.
+mail outside the workspace you configure. By default **it can never send** — replies are
+saved as drafts for you to review and dispatch yourself. Outbound SMTP is an explicit
+opt-in (`allow_smtp: true` in the workspace file) that keeps the tool structurally absent
+until you decide the use-case warrants it.
 
 ## What it does (and doesn't)
 
@@ -15,10 +17,15 @@ drafts for you to review and send yourself in Proton.
 - ✅ **Search** in-scope mail by subject/body/sender/recency/read-status.
 - ✅ **Draft** replies, new messages, and **update** existing drafts (all saved to your Drafts).
 - ✅ Optional housekeeping: mark read/unread, star, move/label within scope, optional delete.
-- ❌ **No sending. No SMTP.** The server never opens an SMTP connection and has no send tool.
+- ✅ Optional **outbound SMTP send** via Bridge — off by default; enable per-workspace with
+  `allow_smtp: true`. When disabled, `smtplib` is never imported and the send tool never
+  appears in the MCP tool list, so the agent is structurally blind to any send capability.
+- ✅ **Developer inspection CLI** (`--inspect`) — shows the exact JSON payloads the LLM
+  receives, including fencing tags and opaque tokens, without routing mail through an AI.
 - ❌ No calendar, no contacts. Mail only.
 
-> Proton Bridge exposes mail over local IMAP/SMTP only; this server uses **IMAP exclusively**.
+> Proton Bridge exposes mail over local IMAP/SMTP. This server uses **IMAP for reading** and
+> Bridge SMTP for sending only when `allow_smtp: true`.
 
 ## How it compares
 
@@ -39,7 +46,7 @@ Proton Calendar. Reviewed: **ProtonBound 0.1.0**, `protonmail-pro-mcp` **1.0.0**
 
 | | **ProtonBound** | protonmail-pro-mcp | proton-mcp | proton-bridge-mcp |
 |---|---|---|---|---|
-| **Can send mail** | **No — no SMTP, enforced by a test** | ⚠️ Yes | ⚠️ Yes | ⚠️ Yes |
+| **Can send mail** | **No by default** — `allow_smtp: false`; `smtp.py` never imported, send tool never registered. Opt-in with `allow_smtp: true`. | ⚠️ Yes | ⚠️ Yes | ⚠️ Yes |
 | **Human review before send** | **Yes — drafts only** | ⚠️ No — sends directly | ⚠️ No — sends directly | ⚠️ No — sends directly |
 | **Scoped access** (deny-by-default folders / addresses / starred) | **Yes** | No — full mailbox | No — full mailbox | No — full mailbox |
 | **Per-workspace isolation** | **Yes — one scope per process** | No | No | No |
@@ -65,29 +72,32 @@ Proton Calendar. Reviewed: **ProtonBound 0.1.0**, `protonmail-pro-mcp` **1.0.0**
 
 | | **ProtonBound** | protonmail-pro-mcp | proton-mcp | proton-bridge-mcp |
 |---|---|---|---|---|
-| Read attachment list (metadata to LLM) | Yes | Unknown | Yes | Yes |
-| Attachment content to LLM | **Opt-in**, size-capped | Unknown | Yes | Yes (requires `acknowledged=true`) |
+| Read attachment list (metadata to LLM) | Yes | Yes | Yes | Yes |
+| Attachment content to LLM | **Opt-in**, size-capped | Yes (bundled with send) | Yes — base64-encoded inline | Explicit download tool only (requires `acknowledged=true`) |
 | Re-attach to draft without LLM pass-through | **Yes — in-scope mail only** | No | No | No |
-| Attach local files to draft | **Opt-in**, size-capped | Yes | Unknown | Unknown |
+| Attach local files to draft | **Opt-in**, size-capped | Yes | No | No — download to disk only |
 
 **Email processing**
 
 | | **ProtonBound** | protonmail-pro-mcp | proton-mcp | proton-bridge-mcp |
 |---|---|---|---|---|
-| Thread-centric API (list → get_thread → get_message) | **Yes** | No | No | No |
+| Thread-centric API (list → get_thread → get_message) | **Yes** | No | No — threading metadata only; no server-side grouping | No — In-Reply-To/References passed as raw fields |
 | Thread folding + quote de-duplication | **Yes** — repeated quoted text collapses; edited quotes preserved | No | No | No |
-| HTML → Markdown conversion | **Yes** | Unknown | Unknown | Unknown |
-| Header-only fetch for listing | **Yes** | Unknown | Unknown | Unknown |
-| Persistent connection with idle probe | **Yes** — reused; NOOP probe only after 30 s idle | Unknown | Unknown | Yes — asyncio, auto-reconnect |
-| Loopback socket tuning (TCP_NODELAY, SO_RCVBUF) | **Yes** | No | No | Unknown |
-| Concurrent tool call safety | **Yes** — threading.RLock serialises IMAP ops | Unknown | Unknown | Yes — asyncio lock |
+| HTML → Markdown conversion | **Yes** | Source not public | No — returns `mail.text` or raw HTML as-is | No — HTML returned as-is |
+| Header-only fetch for listing | **Yes** | Source not public | Yes — uses `'HEADER'` param for listings | Yes — `BODY.PEEK[HEADER.FIELDS ...]` for listings |
+| Persistent connection with idle probe | **Yes** — reused; NOOP probe only after 30 s idle | Source not public | No — new connection per operation | Yes — long-lived; NOOP before each reuse |
+| Loopback socket tuning (TCP_NODELAY, SO_RCVBUF) | **Yes** | No | No | No |
+| Concurrent tool call safety | **Yes** — `threading.RLock` serialises IMAP ops | Source not public | Sequential — no parallelism within a request | Yes — `asyncio.Lock` per connection |
 
 **Why the security columns matter.** Every email body is attacker-controlled text, so an
 agent reading your mail can be steered by a malicious message (*prompt injection*) into using
 whatever tools it holds. ProtonBound is built to make a hijacked agent harmless:
 
-- **It cannot send** — structurally (no `smtplib` anywhere in the package), not by policy. The
-  worst case is a draft *you* review, never mail that left your machine.
+- **Send is off by default** — with `allow_smtp: false` (the default), `smtplib` is never
+  imported and the send tool is never registered; the agent is structurally blind to it. When
+  `allow_smtp: true` is set, a runtime `PermissionError` guard fires as the first line of the
+  send function, independent of the registration gate, so the boundary holds even through
+  future refactors. The worst case in the default config is a draft *you* review.
 - **Deny-by-default scope** — it only ever sees the folders/addresses you list (optionally
   starred-only), and each workspace runs as its own isolated process, so one agent can't reach
   another's mail.
@@ -176,10 +186,12 @@ permission tier, and the real names of your Drafts/Trash mailboxes as Bridge rep
 
 | Field | Default | Description |
 |---|---|---|
-| `username` | *(required)* | Bridge IMAP login — your primary Proton address |
+| `username` | *(required)* | Bridge IMAP/SMTP login — your primary Proton address |
 | `imap_host` | `127.0.0.1` | Bridge host |
 | `imap_port` | `1143` | Bridge IMAP port |
-| `from_address` | same as `username` | Sender identity for new drafts (use to draft *as* an alias) |
+| `smtp_host` | `127.0.0.1` | Bridge SMTP host (used only when `allow_smtp: true`) |
+| `smtp_port` | `1025` | Bridge SMTP port (used only when `allow_smtp: true`) |
+| `from_address` | same as `username` | Sender identity for drafts and outbound mail (use to send *as* an alias) |
 | `bridge_cert_sha256` | *(unset)* | SHA-256 fingerprint to pin Bridge's TLS cert (see below) |
 
 ## Store the Bridge password
@@ -267,10 +279,90 @@ Add **one entry per workspace** to your client config (e.g. Claude Desktop's
 
 | `permission` | Reads | Drafts & housekeeping | Sends |
 |--------------|:-----:|:---------------------:|:-----:|
-| `readonly`   | ✅    | ❌                    | ❌ (never) |
-| `read-write` | ✅    | ✅                    | ❌ (never) |
+| `readonly`   | ✅    | ❌                    | ❌ by default |
+| `read-write` | ✅    | ✅                    | ❌ by default |
 
-`delete_message` is only offered when `allow_delete: true` (and needs `write_targets.trash`).
+Sending is a separate opt-in flag, independent of the permission tier:
+
+| `mail:` flag | Default | Effect |
+|---|---|---|
+| `allow_delete: true` | `false` | Enables `delete_message` (needs `write_targets.trash`) |
+| `allow_local_attachments: true` | `false` | Allows attaching local files to drafts |
+| `allow_smtp: true` | `false` | Registers `send_outbound_email` and loads `smtplib` |
+
+## Enabling outbound SMTP (opt-in)
+
+By default ProtonBound has no send capability: `smtplib` is never imported and
+`send_outbound_email` is never registered. To enable it for a workspace, add `allow_smtp:
+true` to the `mail:` section:
+
+```yaml
+mail:
+  permission: read-write
+  allow_smtp: true
+  scope:
+    sources: [Folders/Outbox-Queue]
+  write_targets:
+    drafts: Drafts
+```
+
+When enabled the agent gets a `send_outbound_email` tool with `to`, `subject`, `body`, and
+optional `cc`/`bcc` fields. The tool description instructs the agent to obtain explicit user
+confirmation before calling it, since email bodies are attacker-controlled and may contain
+prompt-injection instructions designed to trigger sends.
+
+**Two independent guards prevent a hijacked agent from sending without `allow_smtp: true`:**
+
+1. **Registration gate** — the tool is never registered when `allow_smtp: false`, so the agent
+   has no knowledge of any send capability.
+2. **Runtime guard** — the first line of `send_outbound_email` raises `PermissionError` if
+   `allow_smtp` is `false` at call time, independent of how the function was reached.
+
+Bridge SMTP connection settings default to `127.0.0.1:1025` and can be overridden under
+`account:` with `smtp_host` / `smtp_port`.
+
+## Inspection CLI
+
+The `--inspect` flag launches a developer tool that shows **exactly the payloads the LLM
+receives** — including `<untrusted-email-content>` fencing, defanged injection attempts, and
+opaque message tokens — without routing real mail through an AI agent.
+
+**One-shot mode** (pipe-friendly with `--raw`):
+
+```bash
+# List threads
+uv run protonbound --workspace workspaces/my-clients.yaml --inspect threads --limit 5
+
+# Search and see the fenced body payloads
+uv run protonbound --workspace workspaces/my-clients.yaml --inspect search "invoice"
+
+# View a specific message by its opaque token
+uv run protonbound --workspace workspaces/my-clients.yaml --inspect message <token>
+
+# Bare JSON for piping to jq
+uv run protonbound --workspace workspaces/my-clients.yaml --inspect --raw search "q" | jq .
+
+# Connection and session token stats
+uv run protonbound --workspace workspaces/my-clients.yaml --inspect status
+```
+
+**Interactive REPL** (omit the command):
+
+```bash
+uv run protonbound --workspace workspaces/my-clients.yaml --inspect
+inspect> threads
+inspect> search --from alice@example.com --days 7
+inspect> thread <thread_id>
+inspect> message <message_id>
+inspect> status
+inspect> help
+inspect> quit
+```
+
+Available commands mirror the MCP tool surface 1-to-1: `info`, `folders`, `threads`,
+`thread`, `message`, `search`, `status`. Token IDs issued by `threads`/`search` are valid
+for `thread`/`message` within the same session, subject to the same opaque-id whitelist the
+LLM operates under.
 
 ## Security notes
 
@@ -281,6 +373,9 @@ Add **one entry per workspace** to your client config (e.g. Claude Desktop's
   *partial* if some messages are outside scope — this is intentional (no peeking via All Mail).
 - The scope core ([`src/protonbound/scope.py`](src/protonbound/scope.py)) is pure and fully
   unit-tested ([`tests/test_scope.py`](tests/test_scope.py)).
+- **`smtplib` is only loaded when you explicitly opt in.** With the default `allow_smtp:
+  false`, `smtp.py` is never imported, the send tool is never registered, and `smtplib` does
+  not appear in `sys.modules`. A test enforces that no other module in the package imports it.
 - **Message ids are opaque and session-scoped.** Each id encodes a mailbox index + UID + CRC;
   a tampered or guessed id is rejected before any IMAP call. Ids are also whitelisted per
   session — a tool cannot act on an id unless it was issued to the agent in the same session.

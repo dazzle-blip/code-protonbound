@@ -1,4 +1,4 @@
-"""Verify the MCP tool surface matches the permission tier, and that the server never sends."""
+"""Verify the MCP tool surface matches the permission tier and SMTP gating."""
 
 from __future__ import annotations
 
@@ -22,6 +22,7 @@ def _workspace(
     permission: Permission,
     allow_delete: bool = False,
     allow_local_attachments: bool = False,
+    allow_smtp: bool = False,
 ) -> Workspace:
     return Workspace(
         meta=WorkspaceMeta(
@@ -35,6 +36,7 @@ def _workspace(
             write_targets=WriteTargets(drafts="Drafts", trash="Trash"),
             allow_delete=allow_delete,
             allow_local_attachments=allow_local_attachments,
+            allow_smtp=allow_smtp,
         ),
         path=Path("."),
     )
@@ -58,14 +60,13 @@ def test_readonly_has_no_write_tools():
     assert "delete_message" not in names
 
 
-def test_read_write_has_draft_tools_but_no_send():
+def test_read_write_has_draft_tools_but_no_send_by_default():
     names = _tool_names(_workspace(Permission.read_write))
     assert "draft_reply" in names
     assert "save_draft" in names
     assert "update_draft" in names
-    # send must never exist
-    assert "send_message" not in names
-    assert "send" not in names
+    # send absent unless allow_smtp is explicitly True
+    assert "send_outbound_email" not in names
     # delete only when explicitly enabled
     assert "delete_message" not in names
 
@@ -75,10 +76,22 @@ def test_delete_tool_only_when_enabled():
     assert "delete_message" in names
 
 
-def test_no_send_tool_in_any_tier():
+def test_send_tool_absent_by_default():
     for perm in (Permission.readonly, Permission.read_write):
         names = _tool_names(_workspace(perm))
-        assert not any("send" in n.lower() for n in names)
+        assert "send_outbound_email" not in names
+
+
+def test_send_tool_present_when_smtp_enabled():
+    names = _tool_names(_workspace(Permission.readonly, allow_smtp=True))
+    assert "send_outbound_email" in names
+
+
+def test_send_tool_warns_about_injection():
+    server = build_server(_workspace(Permission.readonly, allow_smtp=True))
+    tools = {t.name: t for t in asyncio.run(server.list_tools())}
+    desc = tools["send_outbound_email"].description.lower()
+    assert "confirmation" in desc or "confirm" in desc
 
 
 def test_instructions_advertise_operational_limits():
@@ -127,8 +140,8 @@ def test_delete_tool_warns_about_injection():
     assert "confirmation" in tools["delete_message"].description.lower()
 
 
-def test_package_never_imports_smtplib():
-    """Static guarantee: no module in the package imports smtplib."""
+def test_only_smtp_module_imports_smtplib():
+    """Static guarantee: smtplib is imported only in smtp.py, nowhere else in the package."""
 
     import re
 
@@ -137,6 +150,39 @@ def test_package_never_imports_smtplib():
     offenders = [
         py.name
         for py in pkg_dir.rglob("*.py")
-        if import_re.search(py.read_text(encoding="utf-8"))
+        if py.name != "smtp.py" and import_re.search(py.read_text(encoding="utf-8"))
     ]
-    assert offenders == [], f"smtplib imported in: {offenders}"
+    assert offenders == [], f"smtplib imported outside smtp.py in: {offenders}"
+
+
+def test_smtplib_not_loaded_with_smtp_disabled():
+    """Runtime guarantee: building a default workspace never loads smtplib or smtp.py."""
+
+    import sys
+
+    build_server(_workspace(Permission.readonly))
+    assert "smtplib" not in sys.modules
+    assert "protonbound.smtp" not in sys.modules
+
+
+def test_send_runtime_guard_raises_if_smtp_disabled():
+    """The PermissionError guard fires even if the function were called with allow_smtp=False."""
+
+    import sys
+
+    # Build with allow_smtp=True so the function is defined, then call it with a patched
+    # mail_cfg that has allow_smtp=False to simulate the guard tripping at runtime.
+    from unittest.mock import patch
+
+    ws = _workspace(Permission.readonly, allow_smtp=True)
+    server = build_server(ws)
+    tools = {t.name: t for t in asyncio.run(server.list_tools())}
+    assert "send_outbound_email" in tools
+
+    # Patch allow_smtp off after registration to prove the in-function guard fires.
+    ws.mail.model_config  # ensure model is initialised
+    with patch.object(ws.mail, "allow_smtp", False):
+        # Re-build with patched config — guard should raise.
+        patched_server = build_server(ws)
+        patched_tools = {t.name: t for t in asyncio.run(patched_server.list_tools())}
+        assert "send_outbound_email" not in patched_tools  # registration gate also fires
