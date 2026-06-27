@@ -26,23 +26,23 @@ Other Proton MCP servers exist. This comparison is **Proton-only and security-fi
 ignores features that don't actually talk to Proton — e.g. `proton-mcp`'s "Calendar" is a
 generic CalDAV client pointed at a self-hosted **Radicale** server on `127.0.0.1:5232`, not
 Proton Calendar. Reviewed: **ProtonBound 0.1.0**, `protonmail-pro-mcp` **1.0.0**, `proton-mcp`
-**1.0.0**.
+**1.0.0**, `proton-bridge-mcp` (no version tag).
 
-| | **ProtonBound** | protonmail-pro-mcp | proton-mcp |
-|---|---|---|---|
-| Stack | Python | Node / TS | Node / JS |
-| Proton transport | Bridge **IMAP only** | Bridge IMAP **+ remote SMTP** | Bridge IMAP + SMTP |
-| **Can send mail** | **No — no SMTP, enforced by a test** | Yes | Yes |
-| **Scoped access** (deny-by-default folders / addresses / starred) | **Yes** | No — full mailbox | No — full mailbox |
-| **Human review before send** | **Yes — drafts only** | No — sends directly | No — sends directly |
-| Destructive ops | Drafts only; delete is opt-in (→ Trash) | **Permanent delete** | Delete mail |
-| Reads password vault / TOTP | **No** | No | **Yes** (`pass__get_item` / `get_totp`) |
-| Credential exposure | **Local Bridge password only** | Account creds → remote SMTP | Bridge password + pass-cli |
-| Attachments | Read + re-attach from in-scope mail; local-file **opt-in**, size cap | Send with attachments | Read attachments |
-| Per-workspace isolation | **Yes — one scope per process** | No | No |
-| **TLS cert pinning** for Bridge connection | **Yes** (`bridge_cert_sha256`) | No | No |
-| **Opaque message ids** (session-scoped whitelist, CRC-verified) | **Yes** | No | No |
-| **Body fencing** (untrusted content labelled, boundary defanged) | **Yes** | No | No |
+| | **ProtonBound** | protonmail-pro-mcp | proton-mcp | proton-bridge-mcp |
+|---|---|---|---|---|
+| Stack | Python | Node / TS | Node / JS | Python |
+| Proton transport | Bridge **IMAP only** | Bridge IMAP **+ remote SMTP** | Bridge IMAP + SMTP | Bridge IMAP + SMTP |
+| **Can send mail** | **No — no SMTP, enforced by a test** | Yes | Yes | Yes |
+| **Scoped access** (deny-by-default folders / addresses / starred) | **Yes** | No — full mailbox | No — full mailbox | No — full mailbox |
+| **Human review before send** | **Yes — drafts only** | No — sends directly | No — sends directly | No — sends directly |
+| Destructive ops | Drafts only; delete is opt-in (→ Trash) | **Permanent delete** | Delete mail | Delete / move / flag (each requires `acknowledged=true`) |
+| Reads password vault / TOTP | **No** | No | **Yes** (`pass__get_item` / `get_totp`) | No |
+| Credential exposure | **Local Bridge password only** | Account creds → remote SMTP | Bridge password + pass-cli | Bridge password (macOS Keychain or env var) |
+| Attachments | Read + re-attach from in-scope mail; local-file **opt-in**, size cap | Send with attachments | Read attachments | Read + download to disk (requires `acknowledged=true`) |
+| Per-workspace isolation | **Yes — one scope per process** | No | No | No |
+| **TLS cert pinning** for Bridge connection | **Yes** (`bridge_cert_sha256`) | No | No | **Yes** (TOFU on first run, stored cert) |
+| **Opaque message ids** (session-scoped whitelist, CRC-verified) | **Yes** | No | No | No |
+| **Body fencing** (untrusted content labelled, boundary defanged) | **Yes** | No | No | No |
 
 **Why the security columns matter.** Every email body is attacker-controlled text, so an
 agent reading your mail can be steered by a malicious message (*prompt injection*) into using
@@ -58,7 +58,9 @@ whatever tools it holds. ProtonBound is built to make a hijacked agent harmless:
 
 The others are more capable — autonomous send, and in `proton-mcp`'s case read access to your
 password vault — but that capability *is* the blast radius an injected instruction can abuse.
-ProtonBound deliberately trades breadth for a tight, auditable security boundary.
+`proton-bridge-mcp` shares the Python/IMAP approach and adds TLS cert pinning (TOFU-style),
+but retains full SMTP send and no folder-level scope controls. ProtonBound deliberately trades
+breadth for a tight, auditable security boundary.
 
 ## How scope works
 
