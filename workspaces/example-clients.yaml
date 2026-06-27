@@ -8,19 +8,23 @@ description: >
   advertised to the model at connect time, so be specific about purpose and boundaries.
 
 account:
-  # Proton Bridge speaks local IMAP only (default host/port below).
+  # Proton Bridge loopback endpoints (defaults below). IMAP is always used; SMTP is only
+  # touched when mail.allow_smtp is true (see below).
   imap_host: 127.0.0.1
   imap_port: 1143
-  # Your PRIMARY Proton Bridge IMAP login (Bridge → account → Mailbox configuration). This
-  # is the account you log in with, not an alias.
+  smtp_host: 127.0.0.1
+  smtp_port: 1025
+  # Your PRIMARY Proton Bridge IMAP/SMTP login (Bridge → account → Mailbox configuration).
+  # This is the account you log in with, not an alias.
   username: you@example.com
   # Default sender for newly composed drafts. Optional: defaults to `username`. Set this to
   # draft new mail *as* an alias. (Replies prefer whichever alias the original was addressed
   # to — see scope.addresses below — regardless of this value.)
   from_address: you@example.com
-  # Optional TLS cert pinning for the Bridge loopback. Capture the value with
-  # `protonbound --show-cert --workspace <this file>`, then paste it here; the server will
-  # refuse to connect (before sending credentials) if Bridge ever presents a different cert.
+  # Optional TLS cert pinning for the Bridge loopback (currently enforced on the IMAP
+  # connection). Capture the value with `protonbound --show-cert --workspace <this file>`,
+  # then paste it here; the server will refuse to connect (before sending credentials) if
+  # Bridge ever presents a different cert. Strongly recommended whenever allow_smtp is true.
   # bridge_cert_sha256: "<64-hex-sha256>"
 
 # What the agent may do and see. Everything below is enforced in code, not by prompting.
@@ -66,3 +70,11 @@ mail:
 
   # Per-attachment size ceiling, in megabytes (Proton's own message limit is ~25 MB total).
   max_attachment_mb: 25
+
+  # Outbound SMTP send. Off by default and SEPARATE from the permission tier — there is no
+  # "send" tier; send is an explicit capability toggle like allow_delete. When false, smtplib
+  # is never imported and the send_outbound_email tool is never registered, so the agent is
+  # structurally blind to any send capability. Set true ONLY where human-supervised sending is
+  # intended; pin bridge_cert_sha256 above when you do, since send transmits your Bridge
+  # credentials over the loopback.
+  allow_smtp: false

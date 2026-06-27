@@ -400,6 +400,7 @@ def build_server(
                 body=body,
                 cc=cc,
                 bcc=bcc,
+                bridge_cert_sha256=account.bridge_cert_sha256,
             )
 
     return mcp

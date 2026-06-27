@@ -231,7 +231,9 @@ account:
 ```
 
 On the next launch the server validates the cert before authenticating. If it mismatches,
-the connection is aborted with a clear error.
+the connection is aborted with a clear error. The same fingerprint pins **both** transports:
+the IMAP read connection and — when `allow_smtp: true` — the SMTP send connection, which is
+checked after STARTTLS and fails closed before your Bridge password is transmitted.
 
 ## Try it locally with the MCP Inspector
 

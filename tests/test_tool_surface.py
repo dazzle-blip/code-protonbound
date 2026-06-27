@@ -156,13 +156,47 @@ def test_only_smtp_module_imports_smtplib():
 
 
 def test_smtplib_not_loaded_with_smtp_disabled():
-    """Runtime guarantee: building a default workspace never loads smtplib or smtp.py."""
+    """Runtime guarantee: building a default workspace never loads smtplib or smtp.py.
 
+    Checked in a fresh subprocess so the result reflects a clean server process and is not
+    polluted by other tests in this session that legitimately import protonbound.smtp.
+    """
+
+    import subprocess
     import sys
+    import textwrap
 
-    build_server(_workspace(Permission.readonly))
-    assert "smtplib" not in sys.modules
-    assert "protonbound.smtp" not in sys.modules
+    script = textwrap.dedent(
+        """
+        import sys
+        from pathlib import Path
+        from protonbound.config import (
+            AccountConfig, MailConfig, Permission, ScopeConfig, Workspace,
+            WorkspaceMeta, WriteTargets,
+        )
+        from protonbound.server import build_server
+
+        ws = Workspace(
+            meta=WorkspaceMeta(
+                name="t", description="d",
+                account=AccountConfig(username="you@example.com"),
+            ),
+            mail=MailConfig(
+                permission=Permission.readonly,
+                scope=ScopeConfig(sources=["Folders/X"]),
+                write_targets=WriteTargets(drafts="Drafts", trash="Trash"),
+            ),
+            path=Path("."),
+        )
+        build_server(ws)
+        assert "smtplib" not in sys.modules, "smtplib loaded with allow_smtp disabled"
+        assert "protonbound.smtp" not in sys.modules, "smtp.py loaded with allow_smtp disabled"
+        """
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", script], capture_output=True, text=True
+    )
+    assert result.returncode == 0, result.stderr
 
 
 def test_send_runtime_guard_raises_if_smtp_disabled():

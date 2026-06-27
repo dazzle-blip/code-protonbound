@@ -28,11 +28,17 @@ can do**, so that the worst case is small and recoverable.
 
 Each is enforced in code, not by prompting.
 
-### 1. The server can never send mail
-No `smtplib` is imported anywhere in the package and no send tool is registered in any tier.
-A hijacked agent's worst outcome is a **draft the human reviews**, never mail that left the
-machine.
-*Where:* `src/protonbound/server.py` (no send tool); `tests/test_tool_surface.py::test_package_never_imports_smtplib`.
+### 1. The server cannot send mail unless the owner opts in — and is structurally blind to sending otherwise
+By default (`allow_smtp: false`) no send tool is registered and `smtplib` is never imported:
+the agent has no knowledge of any send capability and a hijacked agent's worst outcome is a
+**draft the human reviews**, never mail that left the machine. Sending is a deliberate,
+launch-time opt-in the agent cannot reach over MCP (`allow_smtp: true`), which is the *only*
+condition under which `send_outbound_email` is registered and `smtp.py` — the sole module that
+touches `smtplib` — is lazily imported. Even then a runtime `PermissionError` guard is the
+first line of the send function, so the boundary holds even if a future refactor broke the
+registration gate. When enabled, the SMTP transport pins Bridge's TLS cert after STARTTLS and
+fails closed before credentials are sent (see #9).
+*Where:* `src/protonbound/server.py` (conditional `send_outbound_email` registration + in-function guard); `src/protonbound/smtp.py` (lazy `smtplib`, cert pin); `tests/test_tool_surface.py::test_only_smtp_module_imports_smtplib`, `::test_smtplib_not_loaded_with_smtp_disabled`, `::test_send_runtime_guard_raises_if_smtp_disabled`.
 
 ### 2. Reads and writes are deny-by-default scoped
 A message is in scope only if it lives in an allowed source mailbox **and** (if configured)
@@ -81,10 +87,15 @@ reading an arbitrary **local file** is an explicit opt-in (`allow_local_attachme
 size cap (`max_attachment_mb`).
 *Where:* `src/protonbound/server.py` tool list; `mail.py` (`_resolve_attachment`).
 
-### 9. Secrets stay out of the repo and out of plaintext config
+### 9. Secrets stay out of the repo, and the Bridge channel can be cert-pinned
 The Bridge password is read from the **OS keyring** (preferred) or the
-`PROTONBOUND_BRIDGE_PASSWORD` env var — never from a committed file. IMAP uses STARTTLS.
-*Where:* `src/protonbound/server.py` (`_password_provider`); `__main__.py` (`--set-password`).
+`PROTONBOUND_BRIDGE_PASSWORD` env var — never from a committed file. Both transports use
+STARTTLS over the loopback; when `account.bridge_cert_sha256` is set, the presented cert is
+pinned and the connection **fails closed before credentials are sent** on mismatch — on the
+IMAP read path and, when `allow_smtp` is enabled, on the SMTP send path too. This defeats a
+local TLS-interception proxy on the loopback. The fingerprint is captured with
+`protonbound --show-cert`.
+*Where:* `src/protonbound/server.py` (`_password_provider`); `__main__.py` (`--set-password`); `mail.py` (`_verify_pinned_cert`, IMAP); `smtp.py` (`_verify_pinned_cert`, SMTP).
 
 ### 10. One workspace per process
 Each server instance binds exactly one workspace, so the "career" agent cannot reach "comedy"
@@ -95,12 +106,19 @@ mail — isolation is structural, not policy.
 
 ProtonBound deliberately does **not** defend against these:
 
-- **A human acting on a malicious draft.** It can't send; if the human reviews a poisoned
-  draft and clicks Send in Proton, that's outside the boundary. The fence (#5) and the
-  draft-disclosure of recipients/attachments exist to make that review meaningful.
+- **A human acting on a malicious draft.** In the default no-send posture the agent can only
+  draft; if the human reviews a poisoned draft and clicks Send in Proton, that's outside the
+  boundary. The fence (#5) and the draft-disclosure of recipients/attachments exist to make
+  that review meaningful.
+- **A human approving a malicious send.** When `allow_smtp: true`, the send tool's description
+  requires explicit human confirmation of recipient and content, but that confirmation is a
+  prompt-level mitigation, not a code-enforced one — a human who confirms a poisoned send is
+  outside the boundary. Enable `allow_smtp` only where supervised sending is intended.
 - **A multi-tool agent.** If the same agent also holds shell/filesystem tools, those can stage
-  files or exfiltrate independently of ProtonBound. Note the combination only becomes an
-  *autonomous* exfiltration path if a sibling tool can also send — ProtonBound itself cannot.
+  files or exfiltrate independently of ProtonBound. With `allow_smtp: false` (default),
+  ProtonBound contributes no send capability, so it only becomes an *autonomous* exfiltration
+  path if a sibling tool can send; with `allow_smtp: true` ProtonBound itself is that path,
+  gated only by the human-confirmation prompt.
 - **Host / Bridge / keyring compromise.** A compromised machine or Bridge process is game over;
   ProtonBound trusts them.
 - **Availability under huge scope.** `_MAX_SCAN_PER_SOURCE` bounds work, which can drop the
@@ -112,6 +130,7 @@ ProtonBound deliberately does **not** defend against these:
 | Setting | Effect when enabled |
 |---|---|
 | `permission: read-write` | adds drafting + housekeeping tools (still no send) |
+| `allow_smtp` | registers `send_outbound_email` and imports `smtplib`; the agent can send via Bridge (human-supervised). Pin `bridge_cert_sha256` when enabling |
 | `allow_delete` | adds `delete_message` (move to Trash) |
 | `allow_local_attachments` | lets drafts read arbitrary local files (size-capped) |
 | `require_starred` | narrows scope to starred messages only |
