@@ -1,4 +1,4 @@
-﻿"""Workspace configuration models and loader.
+"""Workspace configuration models and loader.
 
 A workspace is a single committed YAML file (``workspaces/<name>.yaml``) with two parts:
 

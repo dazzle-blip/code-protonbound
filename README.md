@@ -1,4 +1,4 @@
-﻿# ProtonBound
+# ProtonBound
 
 A lightweight **MCP server** that gives an AI agent a **scoped, read-and-draft-only** view
 into your Proton Mail through **Proton Bridge**.

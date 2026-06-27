@@ -1,4 +1,4 @@
-﻿# ProtonBound Security Model
+# ProtonBound Security Model
 
 An auditable map of **what ProtonBound guarantees, how, and what it does not**. It exists
 because the server hands an LLM access to a real mailbox, and email is attacker-controlled

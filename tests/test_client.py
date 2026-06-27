@@ -1,4 +1,4 @@
-﻿"""Client-level tests against a fake IMAP connection (no network, no Proton Bridge).
+"""Client-level tests against a fake IMAP connection (no network, no Proton Bridge).
 
 These exercise the code paths that the header-parsing and tool-surface tests don't reach:
 the read/write methods on :class:`ProtonMailClient`. In particular they pin the label

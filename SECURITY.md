@@ -1,4 +1,4 @@
-﻿# Security Policy
+# Security Policy
 
 ProtonBound brokers an AI agent's access to a real mailbox, so its security posture is the
 point of the project. Reports of weaknesses are welcome.

@@ -1,4 +1,4 @@
-﻿"""CLI entry point: ``protonbound --workspace <file>``.
+"""CLI entry point: ``protonbound --workspace <file>``.
 
 Each server instance is bound to exactly one workspace YAML file, selected here at launch
 (via the ``--workspace`` flag or the ``PROTONBOUND_WORKSPACE`` environment variable). The

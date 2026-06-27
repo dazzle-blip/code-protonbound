@@ -1,4 +1,4 @@
-﻿"""Config loading and validation tests."""
+"""Config loading and validation tests."""
 
 from __future__ import annotations
 

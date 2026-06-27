@@ -1,4 +1,4 @@
-﻿"""IMAP-only Proton Bridge client.
+"""IMAP-only Proton Bridge client.
 
 This module deliberately imports **no** ``smtplib`` and never opens an SMTP socket: the
 server can read mail and write drafts, but it cannot send. Every operation routes through

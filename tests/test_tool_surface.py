@@ -1,4 +1,4 @@
-﻿"""Verify the MCP tool surface matches the permission tier, and that the server never sends."""
+"""Verify the MCP tool surface matches the permission tier, and that the server never sends."""
 
 from __future__ import annotations
 

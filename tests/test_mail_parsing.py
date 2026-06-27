@@ -1,4 +1,4 @@
-﻿"""Unit tests for IMAP FETCH-response parsing (no network).
+"""Unit tests for IMAP FETCH-response parsing (no network).
 
 These pin the exact wire shapes imaplib hands back, including the Proton Bridge layout
 that emits ``UID`` *after* the body literal — which imaplib returns as a separate,

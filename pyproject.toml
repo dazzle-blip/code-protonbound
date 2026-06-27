@@ -1,4 +1,4 @@
-﻿[project]
+[project]
 name = "protonbound"
 version = "0.1.0"
 description = "A lightweight MCP server exposing a scoped, read-and-draft-only view into Proton Mail via Proton Bridge."

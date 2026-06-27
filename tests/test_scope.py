@@ -1,4 +1,4 @@
-﻿"""Unit tests for the deterministic scope core (no network)."""
+"""Unit tests for the deterministic scope core (no network)."""
 
 from __future__ import annotations
 

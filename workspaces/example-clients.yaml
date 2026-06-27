@@ -1,4 +1,4 @@
-﻿# Example workspace. Copy this directory to workspaces/<your-name> and edit the values.
+# Example workspace. Copy this directory to workspaces/<your-name> and edit the values.
 # One workspace = one MCP server instance, bound to a single scope. No secrets live here;
 # the Bridge password is read from PROTONBOUND_BRIDGE_PASSWORD at connect time.
 

@@ -1,4 +1,4 @@
-﻿"""FastMCP server: registers tools gated by the workspace's permission tier.
+"""FastMCP server: registers tools gated by the workspace's permission tier.
 
 Capabilities are wired up *conditionally*. In ``readonly`` mode the write tools are never
 registered, so they are absent from the MCP tool list rather than refused at call time.
