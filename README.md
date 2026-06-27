@@ -31,16 +31,16 @@ Proton Calendar. Reviewed: **ProtonBound 0.1.0**, `protonmail-pro-mcp` **1.0.0**
 | | **ProtonBound** | protonmail-pro-mcp | proton-mcp | proton-bridge-mcp |
 |---|---|---|---|---|
 | Stack | Python | Node / TS | Node / JS | Python |
-| Proton transport | Bridge **IMAP only** | Bridge IMAP **+ remote SMTP** | Bridge IMAP + SMTP | Bridge IMAP + SMTP |
-| **Can send mail** | **No — no SMTP, enforced by a test** | Yes | Yes | Yes |
+| Proton transport | Bridge IMAP only | Bridge IMAP + remote SMTP | Bridge IMAP + SMTP | Bridge IMAP + SMTP |
+| **Can send mail** | **No — no SMTP, enforced by a test** | ⚠️ Yes | ⚠️ Yes | ⚠️ Yes |
 | **Scoped access** (deny-by-default folders / addresses / starred) | **Yes** | No — full mailbox | No — full mailbox | No — full mailbox |
-| **Human review before send** | **Yes — drafts only** | No — sends directly | No — sends directly | No — sends directly |
-| Destructive ops | Drafts only; delete is opt-in (→ Trash) | **Permanent delete** | Delete mail | Delete / move / flag (each requires `acknowledged=true`) |
-| Reads password vault / TOTP | **No** | No | **Yes** (`pass__get_item` / `get_totp`) | No |
-| Credential exposure | **Local Bridge password only** | Account creds → remote SMTP | Bridge password + pass-cli | Bridge password (macOS Keychain or env var) |
-| Attachments | Read + re-attach from in-scope mail; local-file **opt-in**, size cap | Send with attachments | Read attachments | Read + download to disk (requires `acknowledged=true`) |
-| Per-workspace isolation | **Yes — one scope per process** | No | No | No |
-| **TLS cert pinning** for Bridge connection | **Yes** (`bridge_cert_sha256`) | No | No | **Yes** (TOFU on first run, stored cert) |
+| **Human review before send** | **Yes — drafts only** | ⚠️ No — sends directly | ⚠️ No — sends directly | ⚠️ No — sends directly |
+| **Destructive ops** | Drafts only; delete is opt-in (→ Trash) | ⚠️ **Permanent delete** | Delete mail | Delete / move / flag (each requires `acknowledged=true`) |
+| **Reads password vault / TOTP** | No | No | ⚠️ **Yes** (`pass__get_item` / `get_totp`) | No |
+| **Credential storage** | **OS keyring** (`keyring` package — macOS/Windows/Linux) or env var | ⚠️ Account creds → remote SMTP | Bridge password + pass-cli | macOS Keychain only (`/usr/bin/security`) or env var |
+| Attachments | Read + re-attach from in-scope mail; local-file opt-in, size cap | Send with attachments | Read attachments | Read + download to disk (requires `acknowledged=true`) |
+| **Per-workspace isolation** | **Yes — one scope per process** | No | No | No |
+| **TLS cert pinning** for Bridge connection | **Yes** — explicit SHA-256 pin in config (`bridge_cert_sha256`); opt-in but a hard match when set; use `--show-cert` to capture | ⚠️ No | ⚠️ No | Yes — automatic TOFU: cert captured on first connection and stored; on by default but vulnerable if first run is already intercepted |
 | **Opaque message ids** (session-scoped whitelist, CRC-verified) | **Yes** | No | No | No |
 | **Body fencing** (untrusted content labelled, boundary defanged) | **Yes** | No | No | No |
 
