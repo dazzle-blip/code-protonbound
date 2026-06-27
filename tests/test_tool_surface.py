@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import importlib.util
 from pathlib import Path
 
-import protonbound
 from protonbound.config import (
     AccountConfig,
     MailConfig,
@@ -133,7 +133,7 @@ def test_package_never_imports_smtplib():
     import re
 
     import_re = re.compile(r"^\s*(?:import\s+smtplib|from\s+smtplib\s+import)", re.MULTILINE)
-    pkg_dir = Path(protonbound.__file__).parent
+    pkg_dir = Path(importlib.util.find_spec("protonbound").origin).parent
     offenders = [
         py.name
         for py in pkg_dir.rglob("*.py")

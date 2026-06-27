@@ -21,7 +21,11 @@ from protonbound.config import (
     ScopeConfig,
     WriteTargets,
 )
-from protonbound.mail import MailError, ProtonMailClient, _extract_text, _MailboxIndex
+
+MailError = mailmod.MailError
+ProtonMailClient = mailmod.ProtonMailClient
+_extract_text = mailmod._extract_text
+_MailboxIndex = mailmod._MailboxIndex
 
 
 def _msg(message_id: str, *, to="team@example.com", frm="a@b.com",
