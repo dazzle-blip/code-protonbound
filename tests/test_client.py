@@ -176,13 +176,14 @@ class _FakeIMAP:
 
 
 def _client(fake: _FakeIMAP, sources, addresses=None, allow_delete=False,
-            allow_local_attachments=False) -> ProtonMailClient:
+            allow_local_attachments=False, signature=None) -> ProtonMailClient:
     mail = MailConfig(
         permission=Permission.read_write,
         scope=ScopeConfig(sources=sources, addresses=addresses or []),
         write_targets=WriteTargets(drafts="Drafts", trash="Trash"),
         allow_delete=allow_delete,
         allow_local_attachments=allow_local_attachments,
+        signature=signature,
     )
     client = ProtonMailClient(
         account=AccountConfig(username="me@proton.me"),
@@ -430,6 +431,69 @@ def test_local_attachment_allowed_with_optin(tmp_path):
 
     assert result["attachments"] == [{"name": "note.txt", "size": 9}]
     assert _draft_attachments(fake) == {"note.txt": b"localdata"}
+
+
+# -- signatures ---------------------------------------------------------------------
+
+
+def _draft_text(fake: _FakeIMAP) -> str:
+    """Return the plain-text body of the most recently saved draft."""
+    raw = fake._mb["Drafts"][-1]["raw"]
+    parsed = email.message_from_bytes(raw)
+    if parsed.is_multipart():
+        for part in parsed.walk():
+            if part.get_content_type() == "text/plain":
+                return part.get_payload(decode=True).decode()
+        return ""
+    return parsed.get_payload(decode=True).decode()
+
+
+def test_apply_signature_helper():
+    assert mailmod.apply_signature("hi", None) == "hi"  # no-op when unset
+    assert mailmod.apply_signature("hi", "") == "hi"
+    out = mailmod.apply_signature("hi", "Best,\nJane")
+    assert out == "hi\n\n-- \nBest,\nJane"  # RFC 3676 delimiter, trailing space
+
+
+def test_save_draft_appends_configured_signature():
+    fake = _FakeIMAP({SRC: [], "Drafts": []})
+    client = _client(fake, sources=[SRC], signature="Best,\nJane Doe")
+    client.save_draft("x@y.com", "s", "the message")
+    text = _draft_text(fake)
+    assert "the message" in text
+    assert "\n-- \nBest,\nJane Doe" in text
+
+
+def test_save_draft_signature_can_be_suppressed():
+    fake = _FakeIMAP({SRC: [], "Drafts": []})
+    client = _client(fake, sources=[SRC], signature="Best,\nJane Doe")
+    client.save_draft("x@y.com", "s", "the message", append_signature=False)
+    text = _draft_text(fake)
+    assert "the message" in text
+    assert "Jane Doe" not in text
+    assert "-- " not in text
+
+
+def test_no_signature_configured_is_noop_even_when_requested():
+    fake = _FakeIMAP({SRC: [], "Drafts": []})
+    client = _client(fake, sources=[SRC])  # no signature configured
+    client.save_draft("x@y.com", "s", "the message", append_signature=True)
+    text = _draft_text(fake)
+    assert text.strip() == "the message"
+
+
+def test_draft_reply_signature_sits_above_the_quote():
+    src_msg = _msg("<a@x>", frm="them@out.example", body="original line")
+    fake = _FakeIMAP({SRC: [{"uid": "1", "raw": src_msg, "flags": set()}], "Drafts": []})
+    client = _client(fake, sources=[SRC], signature="Cheers,\nJD")
+    client.draft_reply(_mid(client, SRC, "1"), "my reply")
+    text = _draft_text(fake)
+    # order: reply text, then signature, then the quoted original
+    assert (
+        text.index("my reply")
+        < text.index("-- \nCheers,\nJD")
+        < text.index("> original line")
+    )
 
 
 def test_attachment_cap_is_workspace_configurable():

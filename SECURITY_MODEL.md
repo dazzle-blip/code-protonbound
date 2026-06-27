@@ -52,9 +52,13 @@ switch that an injected instruction or a YAML edit cannot undo.
 ### 2. Reads and writes are deny-by-default scoped
 A message is in scope only if it lives in an allowed source mailbox **and** (if configured)
 matches the address allow-list **and** (if `require_starred`) is starred. Every id-addressed
-operation re-checks scope before issuing an IMAP command.
-*Where:* `src/protonbound/scope.py` (`message_in_scope`, `assert_source_in_scope`);
-re-checked in `get_message`, `draft_reply`, `move_message`, `apply_label`, etc.
+operation re-checks scope before issuing an IMAP command. **Outbound identity is scoped too:**
+when `allow_smtp` and `scope.addresses` are both set, a send may only go out *as* one of those
+addresses — validated at launch (the workspace refuses to load otherwise) and re-checked at
+send time. The model has no parameter to choose or override the sender.
+*Where:* `src/protonbound/scope.py` (`message_in_scope`, `assert_source_in_scope`,
+`assert_sendable_from`); `config.py` (`Workspace._send_identity_in_scope`); re-checked in
+`get_message`, `draft_reply`, `move_message`, `send_outbound_email`, etc.
 
 ### 3. Capabilities are absent unless enabled
 Write tools exist only in `read-write` workspaces; `delete_message` only when `allow_delete`;
@@ -111,6 +115,14 @@ Each server instance binds exactly one workspace, so the "career" agent cannot r
 mail — isolation is structural, not policy.
 *Where:* `src/protonbound/__main__.py`.
 
+### 11. No local persistence of mail
+ProtonBound keeps **no cache and no database** — no SQLite, no on-disk index, no copy of any
+message. Reads go to Proton Bridge live; the only state is an in-memory IMAP connection and a
+session-scoped id whitelist, both discarded when the process exits. Bridge already maintains
+the local cache, so ProtonBound adds no second copy of your mail at rest to secure or leak —
+kill the process and no message data is left behind it. (Signatures are config text, not mail.)
+*Where:* `src/protonbound/mail.py` (lazy connection, no file writes; `_issued_ids` is in-memory only).
+
 ## Residual risks (non-goals)
 
 ProtonBound deliberately does **not** defend against these:
@@ -143,6 +155,7 @@ ProtonBound deliberately does **not** defend against these:
 | `allow_delete` | adds `delete_message` (move to Trash) |
 | `allow_local_attachments` | lets drafts read arbitrary local files (size-capped) |
 | `require_starred` | narrows scope to starred messages only |
-| `scope.addresses` | narrows scope to mail involving those addresses (incl. BCC) |
+| `scope.addresses` | narrows read scope to mail involving those addresses (incl. BCC); with `allow_smtp`, also restricts the send-from identity to those addresses |
+| `signature` | code appends this fixed text below drafts/sends when the tool's `append_signature` flag is set; the model never authors it |
 
 Defaults are the conservative choice in every case.

@@ -75,6 +75,71 @@ def test_read_write_requires_drafts_target(tmp_path):
         load_workspace(path)
 
 
+_SEND_META = """
+    name: clients
+    description: Client mail.
+    account:
+      username: me@proton.me
+      from_address: alias@proton.me
+"""
+
+
+def test_send_identity_must_be_within_scope_addresses(tmp_path):
+    """A send-enabled workspace whose sender isn't an in-scope address is rejected."""
+
+    path = write_workspace(
+        tmp_path,
+        VALID_WORKSPACE,  # sender falls back to username me@proton.me
+        """
+        permission: read-write
+        allow_smtp: true
+        scope:
+          sources: ["Labels/AI"]
+          addresses: ["alias@proton.me"]
+        write_targets:
+          drafts: Drafts
+        """,
+    )
+    with pytest.raises(ValidationError, match="not within scope.addresses"):
+        load_workspace(path)
+
+
+def test_send_identity_in_scope_loads(tmp_path):
+    path = write_workspace(
+        tmp_path,
+        _SEND_META,  # from_address alias@proton.me IS in scope.addresses
+        """
+        permission: read-write
+        allow_smtp: true
+        scope:
+          sources: ["Labels/AI"]
+          addresses: ["alias@proton.me"]
+        write_targets:
+          drafts: Drafts
+        """,
+    )
+    ws = load_workspace(path)
+    assert ws.meta.account.from_address == "alias@proton.me"
+
+
+def test_send_identity_unrestricted_without_scope_addresses(tmp_path):
+    """No scope.addresses => nothing to restrict against; any configured sender is fine."""
+
+    path = write_workspace(
+        tmp_path,
+        VALID_WORKSPACE,
+        """
+        permission: read-write
+        allow_smtp: true
+        scope:
+          sources: ["Labels/AI"]
+        write_targets:
+          drafts: Drafts
+        """,
+    )
+    assert load_workspace(path).mail.allow_smtp is True
+
+
 def test_allow_delete_requires_trash_target(tmp_path):
     path = write_workspace(
         tmp_path,

@@ -676,6 +676,7 @@ class ProtonMailClient:
         body: str,
         reply_all: bool = False,
         attachments: list[dict] | None = None,
+        append_signature: bool = True,
     ) -> dict:
         self._require_issued(message_id)
         mailbox, uid = self._ids.decode(message_id)
@@ -713,8 +714,9 @@ class ProtonMailClient:
             refs = source.references + [source.message_id]
             msg["References"] = " ".join(refs)
 
+        new_text = apply_signature(body, self._mail.signature) if append_signature else body
         quoted = "\n".join("> " + line for line in source_body.splitlines())
-        msg.set_content(f"{body}\n\nOn {source.date}, {source.from_addr} wrote:\n{quoted}")
+        msg.set_content(f"{new_text}\n\nOn {source.date}, {source.from_addr} wrote:\n{quoted}")
         attached = self._add_attachments(msg, attachments)
 
         location = self._append_draft(msg)
@@ -735,7 +737,12 @@ class ProtonMailClient:
         }
 
     def save_draft(
-        self, to: str, subject: str, body: str, attachments: list[dict] | None = None
+        self,
+        to: str,
+        subject: str,
+        body: str,
+        attachments: list[dict] | None = None,
+        append_signature: bool = True,
     ) -> dict:
         msg = EmailMessage()
         msg["From"] = self._default_from()
@@ -743,7 +750,8 @@ class ProtonMailClient:
         msg["Subject"] = subject
         msg["Date"] = formatdate(localtime=True)
         msg["Message-ID"] = make_msgid()
-        msg.set_content(body)
+        content = apply_signature(body, self._mail.signature) if append_signature else body
+        msg.set_content(content)
         attached = self._add_attachments(msg, attachments)
         location = self._append_draft(msg)
         self._issue(location)  # the draft id is now usable by update_draft
@@ -756,13 +764,16 @@ class ProtonMailClient:
         subject: str,
         body: str,
         attachments: list[dict] | None = None,
+        append_signature: bool = True,
     ) -> dict:
         self._require_issued(draft_id)
         mailbox, uid = self._ids.decode(draft_id)
         drafts = scope_mod.resolve_write_target("drafts", self._mail)
         if mailbox != drafts:
             raise scope_mod.ScopeError("update_draft can only modify the drafts mailbox")
-        new = self.save_draft(to, subject, body, attachments=attachments)
+        new = self.save_draft(
+            to, subject, body, attachments=attachments, append_signature=append_signature
+        )
         self._delete_uid(drafts, uid)
         return new
 
@@ -1187,6 +1198,25 @@ def _strip_signature(body: str) -> str:
 
     sig = re.search(r"^-- $", body, re.MULTILINE)
     return body[: sig.start()] if sig else body
+
+
+#: RFC 3676 signature separator. The trailing space is significant and is what `_strip_signature`
+#: (and standard mail clients) key on to detect a signature block.
+_SIGNATURE_DELIMITER = "-- "
+
+
+def apply_signature(body: str, signature: str | None) -> str:
+    """Append a workspace signature beneath ``body`` using the RFC 3676 ``-- `` delimiter.
+
+    No-op when ``signature`` is empty. The signature text is **config-defined and appended
+    verbatim by code** — the model never authors or edits it; it only chooses (via a bool on
+    the draft/send tools) whether to include it. Appending below the delimiter keeps it a
+    recognisable signature block rather than free text the model could be steered to alter.
+    """
+
+    if not signature:
+        return body
+    return f"{body.rstrip()}\n\n{_SIGNATURE_DELIMITER}\n{signature.strip()}"
 
 
 def _dedup_key(line: str) -> str:

@@ -9,10 +9,12 @@ from protonbound.scope import (
     ScopeError,
     address_allowed,
     allowed_sources,
+    assert_sendable_from,
     assert_source_in_scope,
     is_source_allowed,
     message_in_scope,
     normalize_address,
+    sendable_from_addresses,
 )
 
 
@@ -36,6 +38,28 @@ def test_out_of_scope_mailbox_is_rejected():
     assert not is_source_allowed("INBOX", scope)
     with pytest.raises(ScopeError):
         assert_source_in_scope("INBOX", scope)
+
+
+# -- sendable-from restriction --------------------------------------------------------
+
+
+def test_sendable_from_restricted_to_scope_addresses():
+    scope = make_scope(addresses=["alias@proton.me", "Other+tag@Proton.me"])
+    allowed = sendable_from_addresses(scope, "me@proton.me")
+    assert allowed == {"alias@proton.me", "other@proton.me"}  # normalised, +tag dropped
+    # an in-scope alias is fine; the primary login (out of scope) is refused
+    assert_sendable_from("ALIAS@proton.me", scope, "me@proton.me")
+    with pytest.raises(ScopeError, match="only send from its in-scope"):
+        assert_sendable_from("me@proton.me", scope, "me@proton.me")
+
+
+def test_sendable_from_unrestricted_without_addresses():
+    scope = make_scope(addresses=[])
+    # with no scope.addresses, only the single configured identity is sendable (no-op gate)
+    assert sendable_from_addresses(scope, "me@proton.me") == {"me@proton.me"}
+    assert_sendable_from("me@proton.me", scope, "me@proton.me")
+    with pytest.raises(ScopeError):
+        assert_sendable_from("someone-else@proton.me", scope, "me@proton.me")
 
 
 # -- address allow-list ---------------------------------------------------------------

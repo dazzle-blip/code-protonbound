@@ -107,6 +107,34 @@ def assert_source_in_scope(mailbox: str, scope: ScopeConfig) -> None:
         )
 
 
+def sendable_from_addresses(scope: ScopeConfig, default_from: str) -> set[str]:
+    """Normalised set of addresses this workspace is permitted to send *as*.
+
+    When ``scope.addresses`` is configured, sending is restricted to those (the workspace's
+    own aliases). Otherwise there is nothing to restrict against, so the single configured
+    identity (``default_from``) is the only sendable address — a no-op restriction.
+    """
+
+    if scope.addresses:
+        return _normalized_set(scope.addresses)
+    return _normalized_set([default_from])
+
+
+def assert_sendable_from(from_addr: str, scope: ScopeConfig, default_from: str) -> None:
+    """Guard called before an SMTP send: the sender must be an in-scope address.
+
+    This mirrors the launch-time check in ``Workspace`` validation, re-applied at the moment
+    of sending so the boundary holds even if the sender were ever made dynamic.
+    """
+
+    allowed = sendable_from_addresses(scope, default_from)
+    if normalize_address(from_addr) not in allowed:
+        raise ScopeError(
+            f"Refusing to send as {from_addr!r}: a workspace may only send from its "
+            f"in-scope address(es) {sorted(allowed)}."
+        )
+
+
 def resolve_write_target(name: str, mail: MailConfig) -> str:
     """Resolve a named write target (e.g. ``'drafts'``) to its real mailbox name.
 

@@ -20,9 +20,16 @@ until you decide the use-case warrants it.
 - ✅ Optional **outbound SMTP send** via Bridge — off by default; enable per-workspace with
   `allow_smtp: true`. When disabled, `smtplib` is never imported and the send tool never
   appears in the MCP tool list, so the agent is structurally blind to any send capability.
+- ✅ Optional **per-workspace signature** appended by code (the model never writes it) below
+  drafts/sends, and — when sending is enabled — the sender is **restricted to the workspace's
+  in-scope address(es)**.
 - ✅ **Developer inspection CLI** (`--inspect`) — shows the exact JSON payloads the LLM
   receives, including fencing tags and opaque tokens, without routing mail through an AI.
 - ❌ No calendar, no contacts. Mail only.
+- ❌ **No local cache or database.** ProtonBound keeps no SQLite store and no mail on disk;
+  every call reads from Proton Bridge live. Bridge already maintains the local cache, so
+  duplicating it would only add a second copy of your mail at rest to defend. See
+  [below](#no-local-cache).
 
 > Proton Bridge exposes mail over local IMAP/SMTP. This server uses **IMAP for reading** and
 > Bridge SMTP for sending only when `allow_smtp: true`.
@@ -112,6 +119,20 @@ account plus a `mail:` section for permission, scope, and write targets). Scope 
 
 See [`workspaces/example-clients.yaml`](workspaces/example-clients.yaml) for a fully
 commented example. One server instance serves exactly one workspace.
+
+## No local cache
+
+ProtonBound deliberately keeps **no local cache and no database** — no SQLite file, no
+on-disk index, no mirror of your messages. Every tool call reads from Proton Bridge live over
+IMAP (with a short-lived in-memory connection and a session-only id whitelist that is
+discarded when the process exits).
+
+This is a deliberate choice, not a missing feature. **Proton Bridge already maintains the
+local cache** of your mailbox; adding a second cache in ProtonBound would buy nothing and
+would create a *new copy of your mail at rest* — more to secure, more to keep in sync, more to
+leak. Keeping ProtonBound stateless means the only mail-at-rest on your machine is Bridge's
+own (already-encrypted) store, and "nothing to exfiltrate" stays true: kill the process and no
+message data remains behind it. If you need caching, that belongs in Bridge, not here.
 
 ## Prerequisites
 
@@ -309,6 +330,35 @@ prompt-injection instructions designed to trigger sends.
 
 Bridge SMTP connection settings default to `127.0.0.1:1025` and can be overridden under
 `account:` with `smtp_host` / `smtp_port`.
+
+### The sender is bound to the workspace's scope
+
+A send-enabled workspace can only send **as one of its own in-scope addresses**. When
+`scope.addresses` is set, the configured sender (`account.from_address`, else `username`)
+must be one of those aliases — this is checked at launch (the workspace fails to load
+otherwise) and **re-checked at the moment of each send**. So a `career` workspace cannot send
+from a `comedy` alias even if hijacked, and the model has no parameter to override the sender.
+With no `scope.addresses` configured there is nothing to bind against, so the single
+configured identity is used unrestricted.
+
+### Signatures
+
+Proton applies your account signature only when you compose in a Proton client; **Bridge does
+not add it** to mail composed through IMAP/SMTP here. So define a signature per workspace if
+you want one:
+
+```yaml
+mail:
+  signature: |
+    Jane Doe
+    Acme Co — contact@example.com
+```
+
+When set, `draft_reply` / `save_draft` / `update_draft` / `send_outbound_email` take an
+`append_signature` flag (default **true**) that appends it below the body under the RFC 3676
+`-- ` delimiter. The text is added **verbatim by code** — the model never authors or edits the
+signature, it only chooses whether to include it (e.g. omitting it on a terse internal reply).
+With no `signature` configured the flag is a no-op.
 
 ### Hard kill-switch: delete the send module
 

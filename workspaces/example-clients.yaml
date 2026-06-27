@@ -52,6 +52,10 @@ mail:
     # headers (Delivered-To / X-Original-To / Envelope-To), so mail BCC'd to an alias is
     # captured too. An empty list means "sources alone gate"; a bare `addresses:` key is
     # None and is rejected, so keep it an explicit empty list when unused.
+    #
+    # These addresses ALSO bound outbound send: when allow_smtp is true and this list is set,
+    # the workspace may only send AS one of these aliases, and account.from_address (above)
+    # must be one of them — so a 'career' workspace can never send from a 'comedy' alias.
     addresses: []
 
   # Named system mailboxes used as WRITE TARGETS only (never read scope). `drafts` is
@@ -70,6 +74,15 @@ mail:
 
   # Per-attachment size ceiling, in megabytes (Proton's own message limit is ~25 MB total).
   max_attachment_mb: 25
+
+  # Optional workspace signature (plain text). When set, the draft/send tools append it below
+  # the message under the standard "-- " delimiter. It is added VERBATIM by code — the model
+  # never writes or edits it, it only passes append_signature=true/false (default true) to
+  # choose whether to include it. Proton Bridge does NOT add your Proton account signature to
+  # mail composed here, so define it here if you want one. Leave unset for no signature.
+  # signature: |
+  #   Jane Doe
+  #   Acme Co — contact@example.com
 
   # Outbound SMTP send. Off by default and SEPARATE from the permission tier — there is no
   # "send" tier; send is an explicit capability toggle like allow_delete. When false, smtplib

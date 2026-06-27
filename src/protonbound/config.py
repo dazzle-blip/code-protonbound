@@ -117,6 +117,11 @@ class MailConfig(BaseModel):
     # any send capability. Set True only in workspaces where human-supervised sending is
     # intentional and accepted.
     allow_smtp: bool = False
+    # Optional, workspace-defined plain-text signature. When set, the draft/send tools can
+    # append it beneath the message (separated by the RFC 3676 "-- " delimiter). The text is
+    # appended verbatim by code — the model never authors or edits it, it only passes a bool
+    # choosing whether to include it. Unset => no signature is ever added.
+    signature: str | None = None
 
     @model_validator(mode="after")
     def _require_targets(self) -> MailConfig:
@@ -163,6 +168,33 @@ class Workspace(BaseModel):
     meta: WorkspaceMeta
     mail: MailConfig
     path: Path
+
+    @model_validator(mode="after")
+    def _send_identity_in_scope(self) -> Workspace:
+        """A send-enabled workspace may only send *as* one of its in-scope addresses.
+
+        When ``allow_smtp`` is on and ``scope.addresses`` declares the workspace's own
+        aliases, the configured sender (``from_address`` else ``username``) must be one of
+        them — so e.g. a 'career' workspace can never send from the 'comedy' alias. With no
+        ``scope.addresses`` there is nothing to restrict against, so the check is skipped.
+        """
+
+        if not self.mail.allow_smtp or not self.mail.scope.addresses:
+            return self
+        # Local import: scope imports from config, so importing it at call time (not module
+        # load) avoids a circular import while reusing the one canonical address normaliser.
+        from .scope import normalize_address
+
+        sender = self.meta.account.from_address or self.meta.account.username
+        allowed = {normalize_address(a) for a in self.mail.scope.addresses}
+        if normalize_address(sender) not in allowed:
+            raise ValueError(
+                f"account sender {sender!r} is not within scope.addresses "
+                f"{self.mail.scope.addresses!r}: a send-enabled (allow_smtp) workspace may "
+                "only send as one of its in-scope addresses. Set account.from_address to one "
+                "of them."
+            )
+        return self
 
 
 def _read_yaml(path: Path) -> dict:
