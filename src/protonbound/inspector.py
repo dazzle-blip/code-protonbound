@@ -34,7 +34,6 @@ from .config import Workspace
 from .mail import ProtonMailClient
 from .server import _password_provider
 
-
 # ---------------------------------------------------------------------------
 # Terminal helpers
 # ---------------------------------------------------------------------------
@@ -190,11 +189,16 @@ def _cmd_search(client: ProtonMailClient, rest: list[str], *, raw: bool) -> None
     )
 
     parts = [f"query={ns.query!r}"]
-    if ns.from_addr:    parts.append(f"from_addr={ns.from_addr!r}")
-    if ns.to_addr:      parts.append(f"to_addr={ns.to_addr!r}")
-    if ns.since_days:   parts.append(f"since_days={ns.since_days}")
-    if ns.unread_only:  parts.append("unread_only=True")
-    if ns.include_body: parts.append("include_body=True")
+    if ns.from_addr:
+        parts.append(f"from_addr={ns.from_addr!r}")
+    if ns.to_addr:
+        parts.append(f"to_addr={ns.to_addr!r}")
+    if ns.since_days:
+        parts.append(f"since_days={ns.since_days}")
+    if ns.unread_only:
+        parts.append("unread_only=True")
+    if ns.include_body:
+        parts.append("include_body=True")
     _emit(f"search_mail({', '.join(parts)})  [{len(data)} result(s)]", data, raw=raw)
 
 
@@ -322,6 +326,8 @@ def run_inspect(workspace: Workspace, args: list[str]) -> int:
         import readline as _rl  # noqa: F401 — enables history and line editing
         _rl.parse_and_bind("tab: complete")
     except ImportError:
+        # readline is stdlib but absent on a stock Windows Python (it's POSIX-only). It is a
+        # pure convenience here, so degrade silently to a plain input() REPL rather than fail.
         pass
 
     banner = (

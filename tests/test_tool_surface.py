@@ -202,7 +202,6 @@ def test_smtplib_not_loaded_with_smtp_disabled():
 def test_send_runtime_guard_raises_if_smtp_disabled():
     """The PermissionError guard fires even if the function were called with allow_smtp=False."""
 
-    import sys
 
     # Build with allow_smtp=True so the function is defined, then call it with a patched
     # mail_cfg that has allow_smtp=False to simulate the guard tripping at runtime.

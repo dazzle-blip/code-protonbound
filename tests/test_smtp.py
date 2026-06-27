@@ -21,7 +21,7 @@ class _FakeSock:
 class _FakeSMTP:
     """Minimal stand-in for smtplib.SMTP recording the order of operations."""
 
-    instances: list["_FakeSMTP"] = []
+    instances: list[_FakeSMTP] = []
 
     def __init__(self, host: str, port: int, timeout: int | None = None) -> None:
         self.host = host
@@ -33,7 +33,7 @@ class _FakeSMTP:
         self.sock = _FakeSock(b"real-bridge-cert-bytes")
         _FakeSMTP.instances.append(self)
 
-    def __enter__(self) -> "_FakeSMTP":
+    def __enter__(self) -> _FakeSMTP:
         return self
 
     def __exit__(self, *exc) -> None:
