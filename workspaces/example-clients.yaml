@@ -1,0 +1,68 @@
+﻿# Example workspace. Copy this directory to workspaces/<your-name> and edit the values.
+# One workspace = one MCP server instance, bound to a single scope. No secrets live here;
+# the Bridge password is read from PROTONBOUND_BRIDGE_PASSWORD at connect time.
+
+name: clients
+description: >
+  Agent-facing description: when SHOULD this workspace be used (and when not). This is
+  advertised to the model at connect time, so be specific about purpose and boundaries.
+
+account:
+  # Proton Bridge speaks local IMAP only (default host/port below).
+  imap_host: 127.0.0.1
+  imap_port: 1143
+  # Your PRIMARY Proton Bridge IMAP login (Bridge → account → Mailbox configuration). This
+  # is the account you log in with, not an alias.
+  username: you@example.com
+  # Default sender for newly composed drafts. Optional: defaults to `username`. Set this to
+  # draft new mail *as* an alias. (Replies prefer whichever alias the original was addressed
+  # to — see scope.addresses below — regardless of this value.)
+  from_address: you@example.com
+  # Optional TLS cert pinning for the Bridge loopback. Capture the value with
+  # `protonbound --show-cert --workspace <this file>`, then paste it here; the server will
+  # refuse to connect (before sending credentials) if Bridge ever presents a different cert.
+  # bridge_cert_sha256: "<64-hex-sha256>"
+
+# What the agent may do and see. Everything below is enforced in code, not by prompting.
+mail:
+  # Permission tier. Only two exist; there is no send tier anywhere in the server.
+  #   readonly   -> read/search/fetch threads within scope
+  #   read-write -> the above plus drafting and housekeeping (still never sends)
+  permission: read-write
+
+  # What the agent may READ. Deny-by-default with combination (AND) semantics: a message is
+  # in scope only if it is in an allowed source AND (if set) matches the address allow-list
+  # AND (if require_starred) is starred.
+  scope:
+    # Allowed source mailboxes (folders and/or labels), named exactly as Bridge reports them.
+    # A subfolder does not include its parent — list each mailbox you want in scope. To use
+    # apply_label / remove_label, the label mailbox must itself appear here.
+    sources:
+      - "Folders/Clients"
+
+    # Curation gate, ANDed with sources. When true, only STARRED messages are visible.
+    # (Star maps to the IMAP \Flagged flag in Bridge.)
+    require_starred: false
+
+    # Optional address allow-list, ANDed with sources. Matches From/To/Cc OR the delivery
+    # headers (Delivered-To / X-Original-To / Envelope-To), so mail BCC'd to an alias is
+    # captured too. An empty list means "sources alone gate"; a bare `addresses:` key is
+    # None and is rejected, so keep it an explicit empty list when unused.
+    addresses: []
+
+  # Named system mailboxes used as WRITE TARGETS only (never read scope). `drafts` is
+  # required for read-write; `trash` is required when allow_delete is true.
+  write_targets:
+    drafts: Drafts
+    trash: Trash
+
+  # Whether the delete_message tool is offered (moves to write_targets.trash).
+  allow_delete: false
+
+  # Whether drafts may attach arbitrary LOCAL files by path. Off by default. Re-attaching a
+  # file already on in-scope mail ({"from_message": ..., "index": N}) is always allowed; this
+  # flag only governs reading the local filesystem ({"path": ...}), which is an extra surface.
+  allow_local_attachments: false
+
+  # Per-attachment size ceiling, in megabytes (Proton's own message limit is ~25 MB total).
+  max_attachment_mb: 25

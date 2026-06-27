@@ -1,0 +1,8 @@
+version: 2
+updates:
+  # Keep the SHA-pinned GitHub Actions current: Dependabot opens PRs that bump the pin to a
+  # newer audited commit, so pinning stays maintainable rather than going stale.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"

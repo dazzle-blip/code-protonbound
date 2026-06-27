@@ -1,0 +1,8 @@
+# Real workspace configs carry your own addresses/scope — DO NOT commit them.
+# Only the example template (example-clients.yaml) is tracked.
+*.yaml
+!example-clients.yaml
+
+*.secret
+secrets.*
+*.local.yaml
