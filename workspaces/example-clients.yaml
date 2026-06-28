@@ -40,7 +40,7 @@ mail:
   scope:
     # Allowed source mailboxes (folders and/or labels), named exactly as Bridge reports them.
     # A subfolder does not include its parent — list each mailbox you want in scope. To use
-    # apply_label / remove_label, the label mailbox must itself appear here.
+    # set_label, the label mailbox must itself appear here.
     sources:
       - "Folders/Clients"
 
@@ -110,9 +110,7 @@ mail:
     - draft_reply
     - save_draft
     - update_draft
-    - mark_read
-    - mark_unread
+    - set_read
     - set_star
     - move_message
-    - apply_label
-    - remove_label
+    - set_label
