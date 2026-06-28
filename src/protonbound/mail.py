@@ -279,6 +279,7 @@ class ProtonMailClient:
         "list_folders", "list_threads", "get_thread", "get_message", "search_mail",
         "draft_reply", "save_draft", "update_draft", "set_seen", "set_star",
         "move_message", "apply_label", "remove_label", "delete_message",
+        "prepare_draft_send", "discard_draft",
     )
 
     def __init__(
@@ -776,6 +777,67 @@ class ProtonMailClient:
         )
         self._delete_uid(drafts, uid)
         return new
+
+    def prepare_draft_send(self, draft_id: str) -> dict:
+        """Stage an existing draft for SMTP send WITHOUT sending (this client never imports
+        smtplib). Validates the id is a draft we issued this session, then returns the sender,
+        the full recipient envelope (To+Cc+Bcc) and the message bytes with the ``Bcc`` header
+        removed. The caller hands the result to the SMTP layer; ``discard_draft`` removes the
+        draft once the send succeeds.
+
+        The message bytes are the stored draft verbatim (attachments, signature and all) so
+        what is sent is exactly what the user reviewed in Drafts — only the Bcc header is
+        stripped, since it must deliver via the envelope but never appear on the wire.
+        """
+
+        self._require_issued(draft_id)
+        mailbox, uid = self._ids.decode(draft_id)
+        drafts = scope_mod.resolve_write_target("drafts", self._mail)
+        if mailbox != drafts:
+            raise scope_mod.ScopeError(
+                "send_draft can only send a message from the drafts mailbox"
+            )
+        msg = self._fetch_message(drafts, uid)
+        if msg is None:
+            raise MailError(f"Draft {draft_id!r} not found in {drafts!r}")
+
+        from_addr = parseaddr(msg.get("From") or "")[1]
+        # Re-bind the sender to the workspace's in-scope address(es) at the moment of sending,
+        # mirroring the send-time guard: a draft's From must still be one we may
+        # send as, even though save_draft set it from in-scope config.
+        scope_mod.assert_sendable_from(from_addr, self._scope, self._default_from())
+
+        to = _addresses(msg.get("To") or "")
+        cc = _addresses(msg.get("Cc") or "")
+        bcc = _addresses(msg.get("Bcc") or "")
+        recipients = list(dict.fromkeys(to + cc + bcc))
+        if not recipients:
+            raise MailError("Draft has no recipients (To/Cc/Bcc all empty); nothing to send")
+
+        # Bcc must reach its recipients (via the envelope, above) but must NOT appear in the
+        # transmitted message — strip every Bcc header from the bytes that go over the wire
+        # (RFC 5322 3.6.3). del removes all occurrences.
+        del msg["Bcc"]
+        return {
+            "from_addr": from_addr,
+            "to": to,
+            "cc": cc,
+            "bcc": bcc,
+            "recipients": recipients,
+            "subject": (msg.get("Subject") or "").strip(),
+            "message_bytes": msg.as_bytes(),
+        }
+
+    def discard_draft(self, draft_id: str) -> None:
+        """Delete a draft from the Drafts mailbox (used after a successful send). Refuses any
+        mailbox other than the drafts write target."""
+
+        self._require_issued(draft_id)
+        mailbox, uid = self._ids.decode(draft_id)
+        drafts = scope_mod.resolve_write_target("drafts", self._mail)
+        if mailbox != drafts:
+            raise scope_mod.ScopeError("discard_draft can only delete from the drafts mailbox")
+        self._delete_uid(drafts, uid)
 
     def set_seen(self, message_id: str, seen: bool) -> dict:
         self._require_issued(message_id)

@@ -98,6 +98,37 @@ class WriteTargets(BaseModel):
     trash: str | None = None
 
 
+#: Canonical catalog of every tool the server can expose, mapped to the capability gate that
+#: is its hard prerequisite:
+#:   "read"   — always permitted (a workspace always has read scope);
+#:   "write"  — requires ``permission: read-write``;
+#:   "delete" — requires ``allow_delete`` (and a trash target);
+#:   "send"   — requires ``allow_smtp`` (and the smtp module present, checked at build time).
+#: The deny-first ``tools:`` allow-list may name only tools whose prerequisite the config
+#: already satisfies; it *selects* among permitted tools, it never grants a capability.
+#: ``server.build_server`` registers exactly the named tools, and ``test_tool_surface`` asserts
+#: this catalog never drifts from the tools the server actually defines.
+TOOL_GATES: dict[str, str] = {
+    "get_workspace_info": "read",
+    "list_folders": "read",
+    "list_threads": "read",
+    "get_thread": "read",
+    "get_message": "read",
+    "search_mail": "read",
+    "draft_reply": "write",
+    "save_draft": "write",
+    "update_draft": "write",
+    "mark_read": "write",
+    "mark_unread": "write",
+    "set_star": "write",
+    "move_message": "write",
+    "apply_label": "write",
+    "remove_label": "write",
+    "delete_message": "delete",
+    "send_draft": "send",
+}
+
+
 class MailConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -122,6 +153,13 @@ class MailConfig(BaseModel):
     # appended verbatim by code — the model never authors or edits it, it only passes a bool
     # choosing whether to include it. Unset => no signature is ever added.
     signature: str | None = None
+    # Explicit allow-list of the exact tools to expose to the model. DENY-FIRST: the surface is
+    # exactly the tools named here and nothing else — not even get_workspace_info unless listed.
+    # The default is an empty list, so a workspace that names no tools exposes none (the safe
+    # default). A name may appear only if its prerequisite capability is enabled (see
+    # TOOL_GATES): the list *narrows* what the permission tier + allow_* flags permit, it never
+    # grants a capability. So the live surface is always (tier/flag-permitted) ∩ (this list).
+    tools: list[str] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def _require_targets(self) -> MailConfig:
@@ -135,9 +173,49 @@ class MailConfig(BaseModel):
             )
         return self
 
+    @model_validator(mode="after")
+    def _validate_tool_allowlist(self) -> MailConfig:
+        """The ``tools:`` allow-list must name real tools whose prerequisite is already enabled.
+
+        This keeps the list a pure *selection* of permitted tools: it cannot name a tool the
+        tiers/flags don't permit (which would be a silent no-op or, worse, read as granting a
+        capability). Unknown names are rejected too, so a typo fails loudly rather than silently
+        dropping a tool the owner meant to expose. An empty list is valid — it exposes nothing.
+        """
+
+        unknown = [t for t in self.tools if t not in TOOL_GATES]
+        if unknown:
+            raise ValueError(
+                f"tools allowlist names unknown tool(s) {unknown}; valid names are "
+                f"{sorted(TOOL_GATES)}"
+            )
+        for tool in self.tools:
+            gate = TOOL_GATES[tool]
+            if gate == "write" and not self.can_write:
+                raise ValueError(
+                    f"tools allowlist includes {tool!r}, which needs 'permission: read-write'"
+                )
+            if gate == "delete" and not self.allow_delete:
+                raise ValueError(
+                    f"tools allowlist includes {tool!r}, which needs 'allow_delete: true'"
+                )
+            if gate == "send" and not self.allow_smtp:
+                raise ValueError(
+                    f"tools allowlist includes {tool!r}, which needs 'allow_smtp: true'"
+                )
+        return self
+
     @property
     def can_write(self) -> bool:
         return self.permission is Permission.read_write
+
+    def exposes(self, tool: str) -> bool:
+        """Whether ``tool`` is selected by the deny-first allow-list. Only names present in
+        ``tools`` pass; an empty list exposes nothing. Prerequisite gating (read-write /
+        allow_delete / allow_smtp) is applied separately in build_server, so the live surface
+        is the intersection of the two."""
+
+        return tool in self.tools
 
 
 class WorkspaceMeta(BaseModel):

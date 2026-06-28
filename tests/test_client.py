@@ -496,6 +496,93 @@ def test_draft_reply_signature_sits_above_the_quote():
     )
 
 
+# -- send_draft staging (prepare_draft_send / discard_draft) --------------------------
+
+
+def _draft_with_bcc() -> bytes:
+    return (
+        b"From: me@proton.me\r\nTo: a@x.com, b@x.com\r\nCc: c@x.com\r\n"
+        b"Bcc: secret@x.com\r\nSubject: hi\r\n"
+        b"Date: Mon, 1 Jan 2024 00:00:00 +0000\r\n\r\nhello"
+    )
+
+
+def test_prepare_draft_send_builds_envelope_and_strips_bcc():
+    fake = _FakeIMAP(
+        {SRC: [], "Drafts": [{"uid": "1", "raw": _draft_with_bcc(), "flags": set()}]}
+    )
+    client = _client(fake, sources=[SRC])
+
+    prepared = client.prepare_draft_send(_mid(client, "Drafts", "1"))
+
+    assert prepared["from_addr"] == "me@proton.me"
+    # full envelope = To + Cc + Bcc, de-duplicated, in order
+    assert prepared["recipients"] == ["a@x.com", "b@x.com", "c@x.com", "secret@x.com"]
+    assert prepared["bcc"] == ["secret@x.com"]
+    # the transmitted bytes must NOT carry the Bcc header, but keep To/Cc
+    parsed = email.message_from_bytes(prepared["message_bytes"])
+    assert parsed["Bcc"] is None
+    assert parsed["To"] == "a@x.com, b@x.com"
+    assert parsed["Cc"] == "c@x.com"
+
+
+def test_prepare_draft_send_rejects_message_outside_drafts():
+    fake = _FakeIMAP({SRC: [{"uid": "1", "raw": _msg("<a@x>"), "flags": set()}], "Drafts": []})
+    client = _client(fake, sources=[SRC])
+
+    with pytest.raises(mailmod.scope_mod.ScopeError):
+        client.prepare_draft_send(_mid(client, SRC, "1"))
+
+
+def test_prepare_draft_send_rejects_out_of_scope_sender():
+    """A draft whose From is not a sendable alias is refused at send time."""
+
+    fake = _FakeIMAP(
+        {SRC: [], "Drafts": [{"uid": "1", "raw": _draft_with_bcc(), "flags": set()}]}
+    )
+    # scope restricts sending to alias@x.com; the draft's From (me@proton.me) is not allowed.
+    client = _client(fake, sources=[SRC], addresses=["alias@x.com"])
+
+    with pytest.raises(mailmod.scope_mod.ScopeError):
+        client.prepare_draft_send(_mid(client, "Drafts", "1"))
+
+
+def test_prepare_draft_send_rejects_unissued_id_before_any_imap():
+    fake = _FakeIMAP(
+        {SRC: [], "Drafts": [{"uid": "1", "raw": _draft_with_bcc(), "flags": set()}]}
+    )
+    client = _client(fake, sources=[SRC])
+    forged = client._ids.encode("Drafts", "1")  # valid token, never issued
+
+    with pytest.raises(mailmod.scope_mod.ScopeError):
+        client.prepare_draft_send(forged)
+
+
+def test_discard_draft_removes_it_from_drafts():
+    fake = _FakeIMAP(
+        {SRC: [], "Drafts": [{"uid": "1", "raw": _draft_with_bcc(), "flags": set()}]}
+    )
+    client = _client(fake, sources=[SRC])
+
+    client.discard_draft(_mid(client, "Drafts", "1"))
+
+    assert fake._mb["Drafts"] == []
+
+
+def test_save_then_prepare_round_trip_keeps_body():
+    """The agent's real path: save_draft hands back an id that prepare_draft_send can stage."""
+
+    fake = _FakeIMAP({SRC: [], "Drafts": []})
+    client = _client(fake, sources=[SRC])
+
+    draft_id = client.save_draft("dest@x.com", "subj", "the body")["draft_id"]
+    prepared = client.prepare_draft_send(draft_id)
+
+    assert prepared["recipients"] == ["dest@x.com"]
+    assert prepared["subject"] == "subj"
+    assert b"the body" in prepared["message_bytes"]
+
+
 def test_attachment_cap_is_workspace_configurable():
     one_mb = MailConfig(
         permission=Permission.read_write,

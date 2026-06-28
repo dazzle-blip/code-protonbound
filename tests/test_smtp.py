@@ -29,6 +29,9 @@ class _FakeSMTP:
         self.events: list[str] = []
         self.logged_in = False
         self.sent = False
+        self.from_addr: str | None = None
+        self.recipients: list[str] | None = None
+        self.payload: bytes | None = None
         # The cert Bridge "presents" after STARTTLS.
         self.sock = _FakeSock(b"real-bridge-cert-bytes")
         _FakeSMTP.instances.append(self)
@@ -52,6 +55,9 @@ class _FakeSMTP:
     def sendmail(self, from_addr: str, recipients: list[str], msg: bytes) -> None:
         self.events.append("sendmail")
         self.sent = True
+        self.from_addr = from_addr
+        self.recipients = recipients
+        self.payload = msg
 
 
 _REAL_FP = hashlib.sha256(b"real-bridge-cert-bytes").hexdigest()
@@ -63,44 +69,49 @@ def _patch_smtp(monkeypatch):
     monkeypatch.setattr(smtp.smtplib, "SMTP", _FakeSMTP)
 
 
-def _send(**overrides):
+def _send_prepared(**overrides):
     kwargs = dict(
         smtp_host="127.0.0.1",
         smtp_port=1025,
         username="you@pm.me",
         password="secret",
         from_addr="you@pm.me",
-        to="dest@example.com",
-        subject="hi",
-        body="hello",
+        recipients=["a@x.com", "b@x.com", "secret@x.com"],
+        message_bytes=b"From: you@pm.me\r\nTo: a@x.com, b@x.com\r\n\r\nhi",
     )
     kwargs.update(overrides)
-    return smtp.send_via_bridge(**kwargs)
+    return smtp.send_prepared_via_bridge(**kwargs)
 
 
-def test_send_succeeds_with_no_pin():
-    result = _send()
-    assert result["sent"] is True
-    assert _FakeSMTP.instances[0].sent is True
+def test_send_prepared_transmits_raw_bytes_to_full_envelope():
+    result = _send_prepared()
+    conn = _FakeSMTP.instances[0]
+    assert result == {"sent": True, "recipients": 3}
+    # the full To+Cc+Bcc envelope reaches sendmail, but the bytes carry no Bcc header
+    assert conn.recipients == ["a@x.com", "b@x.com", "secret@x.com"]
+    assert b"Bcc:" not in conn.payload
+    assert conn.from_addr == "you@pm.me"
 
 
-def test_send_succeeds_when_pin_matches():
-    result = _send(bridge_cert_sha256=_REAL_FP)
-    assert result["sent"] is True
+def test_send_prepared_honours_cert_pin():
+    assert _send_prepared(bridge_cert_sha256=_REAL_FP)["sent"] is True
     assert _FakeSMTP.instances[0].logged_in is True
 
 
-def test_send_succeeds_with_colon_formatted_pin():
+def test_send_prepared_accepts_colon_formatted_pin():
     colonised = ":".join(_REAL_FP[i : i + 2] for i in range(0, len(_REAL_FP), 2))
-    assert _send(bridge_cert_sha256=colonised)["sent"] is True
+    assert _send_prepared(bridge_cert_sha256=colonised)["sent"] is True
 
 
-def test_pin_mismatch_fails_closed_before_login():
+def test_send_prepared_pin_mismatch_fails_closed_before_login():
     with pytest.raises(smtp.SmtpError, match="does not match"):
-        _send(bridge_cert_sha256="00" * 32)
+        _send_prepared(bridge_cert_sha256="00" * 32)
     conn = _FakeSMTP.instances[0]
-    # STARTTLS happened, but credentials were never sent and nothing went out.
-    assert "starttls" in conn.events
-    assert conn.logged_in is False
-    assert conn.sent is False
-    assert "login" not in conn.events
+    assert conn.logged_in is False and conn.sent is False
+
+
+def test_send_prepared_refuses_empty_recipients():
+    with pytest.raises(smtp.SmtpError, match="no recipients"):
+        _send_prepared(recipients=[])
+    # nothing was ever sent
+    assert _FakeSMTP.instances == [] or _FakeSMTP.instances[0].sent is False

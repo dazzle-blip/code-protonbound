@@ -33,11 +33,19 @@ By default (`allow_smtp: false`) no send tool is registered and `smtplib` is nev
 the agent has no knowledge of any send capability and a hijacked agent's worst outcome is a
 **draft the human reviews**, never mail that left the machine. Sending is a deliberate,
 launch-time opt-in the agent cannot reach over MCP (`allow_smtp: true`), which is the *only*
-condition under which `send_outbound_email` is registered and `smtp.py` — the sole module that
-touches `smtplib` — is lazily imported. Even then a runtime `PermissionError` guard is the
+condition under which the send tool (`send_draft`) is registered and `smtp.py` — the sole module
+that touches `smtplib` — is lazily imported. Even then a runtime `PermissionError` guard is the
 first line of the send function, so the boundary holds even if a future refactor broke the
 registration gate. When enabled, the SMTP transport pins Bridge's TLS cert after STARTTLS and
 fails closed before credentials are sent (see #9).
+
+The single send tool is `send_draft`, which takes **only an opaque `draft_id`**: it sends the
+referenced draft's stored bytes verbatim and removes it from Drafts on success. There is
+deliberately **no content-taking send tool** — with no recipient/body parameters, an injected
+instruction cannot smuggle arbitrary mail through the send call. At most it can send a draft that
+already exists in Drafts (composed via `save_draft`/`draft_reply`/`update_draft`) and is visible
+for human review. `Bcc` recipients on the draft are delivered via the envelope but stripped from
+the transmitted message (RFC 5322 §3.6.3).
 
 For a guarantee independent of config, the owner can **physically delete `smtp.py`** (the sole
 module importing `smtplib`). The server detects its absence at startup via
@@ -47,7 +55,7 @@ module importing `smtplib`). The server detects its absence at startup via
 still says `allow_smtp: true` (a one-line stderr notice flags the mismatch). With no module
 present there is simply no send code in the package; this is a stronger, **non-config** kill
 switch that an injected instruction or a YAML edit cannot undo.
-*Where:* `src/protonbound/server.py` (`_smtp_module_available` presence check, conditional `send_outbound_email` registration + in-function guard); `src/protonbound/smtp.py` (lazy `smtplib`, cert pin); `tests/test_tool_surface.py::test_only_smtp_module_imports_smtplib`, `::test_smtplib_not_loaded_with_smtp_disabled`, `::test_deleted_smtp_module_disables_send_despite_allow_smtp`, `::test_building_send_enabled_server_does_not_import_smtplib`.
+*Where:* `src/protonbound/server.py` (`_smtp_module_available` presence check, conditional `send_draft` registration + in-function guard); `src/protonbound/smtp.py` (lazy `smtplib`, cert pin); `tests/test_tool_surface.py::test_only_smtp_module_imports_smtplib`, `::test_smtplib_not_loaded_with_smtp_disabled`, `::test_deleted_smtp_module_disables_send_despite_allow_smtp`, `::test_building_send_enabled_server_does_not_import_smtplib`.
 
 ### 2. Reads and writes are deny-by-default scoped
 A message is in scope only if it lives in an allowed source mailbox **and** (if configured)
@@ -58,14 +66,27 @@ addresses — validated at launch (the workspace refuses to load otherwise) and 
 send time. The model has no parameter to choose or override the sender.
 *Where:* `src/protonbound/scope.py` (`message_in_scope`, `assert_source_in_scope`,
 `assert_sendable_from`); `config.py` (`Workspace._send_identity_in_scope`); re-checked in
-`get_message`, `draft_reply`, `move_message`, `send_outbound_email`, etc.
+`get_message`, `draft_reply`, `move_message`, `prepare_draft_send` (the send path), etc.
 
 ### 3. Capabilities are absent unless enabled
 Write tools exist only in `read-write` workspaces; `delete_message` only when `allow_delete`;
 local-file attachments only when `allow_local_attachments`. A disabled capability is **not in
 the tool schema**, so the model cannot call it — and the toggles live in launch-time config
 the agent cannot reach over MCP.
-*Where:* `src/protonbound/server.py` (conditional `@mcp.tool()` registration).
+
+The LLM-facing surface is pinned **deny-first** by the workspace's `tools:` list: only the named
+tools are registered — nothing implicit, not even `get_workspace_info` unless listed. The field
+defaults to an empty list, so a workspace that names no tools exposes none (the safe default). The
+list can only *narrow* — a tool may be named only if its prerequisite capability is already enabled
+(write tools need `read-write`, `delete_message` needs `allow_delete`, `send_draft` needs
+`allow_smtp`), so the exposed surface is always `(tier/flag-permitted) ∩ (tools list)` and the list
+can never grant a capability or bypass a gate. An unknown or unsatisfiable name fails validation at
+load time. The canonical tool↔prerequisite catalog (`config.TOOL_GATES`) drives both validation and
+registration, and a test asserts it matches the tools `build_server` actually registers.
+*Where:* `src/protonbound/server.py` (conditional `@mcp.tool()` registration via `_register` +
+the allow-list filter); `src/protonbound/config.py` (`TOOL_GATES`, `MailConfig._validate_tool_allowlist`,
+`MailConfig.exposes`); `tests/test_tool_surface.py::test_full_surface_matches_tool_catalog`,
+`::test_allowlist_exposes_exactly_the_listed_tools`, `::test_allowlist_still_intersects_hard_gates`.
 
 ### 4. Message ids are opaque, integrity-checked, and unforgeable-by-guessing
 Ids encode a mailbox **index + UID + CRC**, base64url. Decoding validates the UID is numeric,
@@ -151,7 +172,7 @@ ProtonBound deliberately does **not** defend against these:
 | Setting | Effect when enabled |
 |---|---|
 | `permission: read-write` | adds drafting + housekeeping tools (still no send) |
-| `allow_smtp` | registers `send_outbound_email` and imports `smtplib`; the agent can send via Bridge (human-supervised). Pin `bridge_cert_sha256` when enabling |
+| `allow_smtp` | registers `send_draft` and imports `smtplib`; the agent can send a reviewed draft via Bridge (human-supervised). Pin `bridge_cert_sha256` when enabling |
 | `allow_delete` | adds `delete_message` (move to Trash) |
 | `allow_local_attachments` | lets drafts read arbitrary local files (size-capped) |
 | `require_starred` | narrows scope to starred messages only |

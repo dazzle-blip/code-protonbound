@@ -1,10 +1,10 @@
 """Outbound SMTP send via Proton Bridge.
 
 This is the *only* module in the package that imports smtplib. It is never imported
-at package load time; ``server.py`` lazily imports ``send_via_bridge`` inside the
-``send_outbound_email`` tool body, which is itself only registered when the workspace
-sets ``allow_smtp: true``. With the default ``allow_smtp: false``, this module is
-never touched and smtplib never enters sys.modules.
+at package load time; ``server.py`` lazily imports ``send_prepared_via_bridge`` inside the
+``send_draft`` tool body, which is itself only registered when the workspace sets
+``allow_smtp: true``. With the default ``allow_smtp: false``, this module is never touched
+and smtplib never enters sys.modules.
 """
 
 from __future__ import annotations
@@ -12,8 +12,6 @@ from __future__ import annotations
 import hashlib
 import re
 import smtplib
-from email.mime.multipart import MIMEMultipart
-from email.mime.text import MIMEText
 
 
 class SmtpError(Exception):
@@ -51,43 +49,23 @@ def _verify_pinned_cert(conn: smtplib.SMTP, expected: str | None) -> None:
         )
 
 
-def send_via_bridge(
+def _deliver(
     *,
     smtp_host: str,
     smtp_port: int,
     username: str,
     password: str,
     from_addr: str,
-    to: str,
-    subject: str,
-    body: str,
-    cc: str | None = None,
-    bcc: str | None = None,
-    bridge_cert_sha256: str | None = None,
-) -> dict:
-    """Send one email via Proton Bridge SMTP.
+    recipients: list[str],
+    payload: bytes,
+    bridge_cert_sha256: str | None,
+) -> None:
+    """Run one Bridge SMTP transaction: STARTTLS, optional cert-pin, login, send.
 
-    Only called when the workspace has ``allow_smtp: true`` and the caller has already
-    verified this. The PermissionError guard in ``send_outbound_email`` (server.py) is
-    the primary runtime fence; this function trusts that it has already fired.
-
-    When ``bridge_cert_sha256`` is set, Bridge's TLS cert is pinned after STARTTLS and the
-    send fails closed before credentials are transmitted if it does not match.
+    The single place ``smtplib`` actually transmits. When ``bridge_cert_sha256`` is set,
+    Bridge's TLS cert is pinned after STARTTLS and the send fails closed — before credentials
+    are transmitted — if it does not match.
     """
-
-    msg = MIMEMultipart()
-    msg["From"] = from_addr
-    msg["To"] = to
-    msg["Subject"] = subject
-    if cc:
-        msg["Cc"] = cc
-    msg.attach(MIMEText(body, "plain", "utf-8"))
-
-    recipients = [addr.strip() for addr in to.split(",")]
-    if cc:
-        recipients.extend(addr.strip() for addr in cc.split(","))
-    if bcc:
-        recipients.extend(addr.strip() for addr in bcc.split(","))
 
     with smtplib.SMTP(smtp_host, smtp_port, timeout=30) as conn:
         conn.ehlo()
@@ -95,6 +73,38 @@ def send_via_bridge(
         _verify_pinned_cert(conn, bridge_cert_sha256)  # fail closed BEFORE login
         conn.ehlo()
         conn.login(username, password)
-        conn.sendmail(from_addr, recipients, msg.as_bytes())
+        conn.sendmail(from_addr, recipients, payload)
 
-    return {"sent": True, "to": to, "subject": subject}
+
+def send_prepared_via_bridge(
+    *,
+    smtp_host: str,
+    smtp_port: int,
+    username: str,
+    password: str,
+    from_addr: str,
+    recipients: list[str],
+    message_bytes: bytes,
+    bridge_cert_sha256: str | None = None,
+) -> dict:
+    """Send an already-composed message (raw RFC 822 bytes) to an explicit recipient set.
+
+    The draft-first send path: ``message_bytes`` is the user-reviewed draft exactly as it was
+    stored in Drafts (minus its Bcc header), and ``recipients`` is the full To+Cc+Bcc
+    envelope so blind-copied recipients still receive it. The caller is responsible for having
+    stripped the Bcc header from ``message_bytes`` (the envelope here is what delivers it).
+    """
+
+    if not recipients:
+        raise SmtpError("Refusing to send a draft with no recipients")
+    _deliver(
+        smtp_host=smtp_host,
+        smtp_port=smtp_port,
+        username=username,
+        password=password,
+        from_addr=from_addr,
+        recipients=recipients,
+        payload=message_bytes,
+        bridge_cert_sha256=bridge_cert_sha256,
+    )
+    return {"sent": True, "recipients": len(recipients)}

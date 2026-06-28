@@ -7,6 +7,7 @@ import importlib.util
 from pathlib import Path
 
 from protonbound.config import (
+    TOOL_GATES,
     AccountConfig,
     MailConfig,
     Permission,
@@ -17,13 +18,32 @@ from protonbound.config import (
 )
 from protonbound.server import _workspace_instructions, build_server
 
+#: Sentinel: tools not specified by a test -> default to the full tier/flag-permitted surface,
+#: so tests that aren't about the allow-list still exercise the whole tier (the surface is
+#: deny-first, so without this every such test would otherwise see zero tools).
+_TIER = object()
+
+
+def _permitted_tools(permission, allow_delete, allow_smtp) -> list[str]:
+    enabled = {"read"}
+    if permission is Permission.read_write:
+        enabled.add("write")
+    if allow_delete:
+        enabled.add("delete")
+    if allow_smtp:
+        enabled.add("send")
+    return [name for name, gate in TOOL_GATES.items() if gate in enabled]
+
 
 def _workspace(
     permission: Permission,
     allow_delete: bool = False,
     allow_local_attachments: bool = False,
     allow_smtp: bool = False,
+    tools=_TIER,
 ) -> Workspace:
+    if tools is _TIER:
+        tools = _permitted_tools(permission, allow_delete, allow_smtp)
     return Workspace(
         meta=WorkspaceMeta(
             name="t",
@@ -37,6 +57,7 @@ def _workspace(
             allow_delete=allow_delete,
             allow_local_attachments=allow_local_attachments,
             allow_smtp=allow_smtp,
+            tools=tools,
         ),
         path=Path("."),
     )
@@ -66,7 +87,7 @@ def test_read_write_has_draft_tools_but_no_send_by_default():
     assert "save_draft" in names
     assert "update_draft" in names
     # send absent unless allow_smtp is explicitly True
-    assert "send_outbound_email" not in names
+    assert "send_draft" not in names
     # delete only when explicitly enabled
     assert "delete_message" not in names
 
@@ -76,22 +97,116 @@ def test_delete_tool_only_when_enabled():
     assert "delete_message" in names
 
 
+# -- tools: allowlist (surface fully determined by config) ----------------------------
+
+
+def test_allowlist_exposes_exactly_the_listed_tools():
+    ws = _workspace(
+        Permission.read_write,
+        allow_smtp=True,
+        tools=["list_threads", "get_thread", "draft_reply", "send_draft"],
+    )
+    assert _tool_names(ws) == {"list_threads", "get_thread", "draft_reply", "send_draft"}
+
+
+def test_allowlist_can_exclude_get_workspace_info():
+    """Nothing is implicit — even get_workspace_info only appears if listed."""
+
+    assert _tool_names(_workspace(Permission.readonly, tools=["list_threads"])) == {
+        "list_threads"
+    }
+
+
+def test_empty_allowlist_exposes_nothing():
+    assert _tool_names(_workspace(Permission.readonly, tools=[])) == set()
+
+
+def test_deny_first_default_exposes_nothing():
+    """Deny-first: a config that names no tools (the default empty list) exposes none."""
+
+    ws = Workspace(
+        meta=WorkspaceMeta(
+            name="t", description="d", account=AccountConfig(username="me@proton.me")
+        ),
+        mail=MailConfig(
+            permission=Permission.read_write,
+            scope=ScopeConfig(sources=["Labels/AI"]),
+            write_targets=WriteTargets(drafts="Drafts", trash="Trash"),
+        ),  # tools omitted -> defaults to []
+        path=Path("."),
+    )
+    assert _tool_names(ws) == set()
+
+
+def test_allowlist_still_intersects_hard_gates():
+    """A deleted smtp.py drops send_draft even when it is explicitly allowlisted."""
+
+    from unittest.mock import patch
+
+    import protonbound.server as server_mod
+
+    ws = _workspace(
+        Permission.read_write, allow_smtp=True, tools=["draft_reply", "send_draft"]
+    )
+    with patch.object(server_mod, "_smtp_module_available", return_value=False):
+        names = {t.name for t in asyncio.run(build_server(ws).list_tools())}
+    assert names == {"draft_reply"}  # send_draft dropped by the module kill-switch
+
+
+def test_full_surface_matches_tool_catalog():
+    """Drift guard: a maximally-enabled workspace registers exactly TOOL_GATES' tools."""
+
+    from protonbound.config import TOOL_GATES
+
+    ws = _workspace(Permission.read_write, allow_delete=True, allow_smtp=True)
+    assert _tool_names(ws) == set(TOOL_GATES)
+
+
 def test_send_tool_absent_by_default():
     for perm in (Permission.readonly, Permission.read_write):
         names = _tool_names(_workspace(perm))
-        assert "send_outbound_email" not in names
+        assert "send_draft" not in names
 
 
 def test_send_tool_present_when_smtp_enabled():
-    names = _tool_names(_workspace(Permission.readonly, allow_smtp=True))
-    assert "send_outbound_email" in names
+    names = _tool_names(_workspace(Permission.read_write, allow_smtp=True))
+    assert "send_draft" in names
 
 
 def test_send_tool_warns_about_injection():
-    server = build_server(_workspace(Permission.readonly, allow_smtp=True))
+    server = build_server(_workspace(Permission.read_write, allow_smtp=True))
     tools = {t.name: t for t in asyncio.run(server.list_tools())}
-    desc = tools["send_outbound_email"].description.lower()
+    desc = tools["send_draft"].description.lower()
     assert "confirmation" in desc or "confirm" in desc
+
+
+def test_tool_annotations_mark_read_vs_write_vs_send():
+    """ToolAnnotations let a client tell reads from writes from sends (advisory hints)."""
+
+    server = build_server(_workspace(Permission.read_write, allow_delete=True, allow_smtp=True))
+    tools = {t.name: t for t in asyncio.run(server.list_tools())}
+
+    # read tools are flagged read-only
+    for name in ("list_threads", "get_thread", "get_message", "search_mail", "list_folders"):
+        assert tools[name].annotations.readOnlyHint is True, name
+
+    # writes are not read-only and disclaim the open world (local mailbox only)
+    for name in ("draft_reply", "save_draft", "update_draft", "move_message"):
+        assert tools[name].annotations.readOnlyHint is False, name
+        assert tools[name].annotations.openWorldHint is False, name
+
+    # destructive updates are flagged as such
+    assert tools["update_draft"].annotations.destructiveHint is True
+    assert tools["delete_message"].annotations.destructiveHint is True
+
+    # idempotent housekeeping
+    assert tools["set_star"].annotations.idempotentHint is True
+
+    # send is destructive AND open-world (reaches external recipients)
+    send = tools["send_draft"].annotations
+    assert send.readOnlyHint is False
+    assert send.destructiveHint is True
+    assert send.openWorldHint is True
 
 
 def test_deleted_smtp_module_disables_send_despite_allow_smtp():
@@ -104,7 +219,7 @@ def test_deleted_smtp_module_disables_send_despite_allow_smtp():
     ws = _workspace(Permission.read_write, allow_smtp=True)
     with patch.object(server_mod, "_smtp_module_available", return_value=False):
         names = {t.name for t in asyncio.run(build_server(ws).list_tools())}
-    assert "send_outbound_email" not in names
+    assert "send_draft" not in names
 
 
 def test_instructions_reflect_effective_send_capability():
@@ -145,12 +260,13 @@ def test_building_send_enabled_server_does_not_import_smtplib():
                 scope=ScopeConfig(sources=["Folders/X"]),
                 write_targets=WriteTargets(drafts="Drafts", trash="Trash"),
                 allow_smtp=True,
+                tools=["send_draft"],
             ),
             path=Path("."),
         )
         server = build_server(ws)
         names = {t.name for t in asyncio.run(server.list_tools())}
-        assert "send_outbound_email" in names, names
+        assert "send_draft" in names, names
         assert "smtplib" not in sys.modules, "smtplib imported just by building the server"
         assert "protonbound.smtp" not in sys.modules, "smtp.py imported at build time"
         """
@@ -277,10 +393,10 @@ def test_send_runtime_guard_raises_if_smtp_disabled():
     # mail_cfg that has allow_smtp=False to simulate the guard tripping at runtime.
     from unittest.mock import patch
 
-    ws = _workspace(Permission.readonly, allow_smtp=True)
+    ws = _workspace(Permission.read_write, allow_smtp=True)
     server = build_server(ws)
     tools = {t.name: t for t in asyncio.run(server.list_tools())}
-    assert "send_outbound_email" in tools
+    assert "send_draft" in tools
 
     # Patch allow_smtp off after registration to prove the in-function guard fires.
     ws.mail.model_config  # ensure model is initialised
@@ -288,4 +404,4 @@ def test_send_runtime_guard_raises_if_smtp_disabled():
         # Re-build with patched config — guard should raise.
         patched_server = build_server(ws)
         patched_tools = {t.name: t for t in asyncio.run(patched_server.list_tools())}
-        assert "send_outbound_email" not in patched_tools  # registration gate also fires
+        assert "send_draft" not in patched_tools  # registration gate also fires

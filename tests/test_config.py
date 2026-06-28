@@ -227,6 +227,116 @@ def test_unknown_key_rejected(tmp_path):
         load_workspace(path)
 
 
+# -- tools: allowlist validation ------------------------------------------------------
+
+
+def test_tools_allowlist_valid_subset_loads(tmp_path):
+    path = write_workspace(
+        tmp_path,
+        VALID_WORKSPACE,
+        """
+        permission: read-write
+        scope:
+          sources: ["Labels/AI"]
+        write_targets:
+          drafts: Drafts
+        tools:
+          - list_threads
+          - get_thread
+          - draft_reply
+        """,
+    )
+    assert load_workspace(path).mail.tools == ["list_threads", "get_thread", "draft_reply"]
+
+
+def test_tools_allowlist_empty_list_loads(tmp_path):
+    """An empty list is valid and exposes no tools at all (a fully locked workspace)."""
+
+    path = write_workspace(
+        tmp_path,
+        VALID_WORKSPACE,
+        """
+        permission: readonly
+        scope:
+          sources: ["Labels/AI"]
+        tools: []
+        """,
+    )
+    assert load_workspace(path).mail.tools == []
+
+
+def test_tools_allowlist_unknown_name_rejected(tmp_path):
+    path = write_workspace(
+        tmp_path,
+        VALID_WORKSPACE,
+        """
+        permission: readonly
+        scope:
+          sources: ["Labels/AI"]
+        tools:
+          - list_threads
+          - send_everything
+        """,
+    )
+    with pytest.raises(ValidationError, match="unknown tool"):
+        load_workspace(path)
+
+
+def test_tools_allowlist_write_tool_needs_read_write(tmp_path):
+    path = write_workspace(
+        tmp_path,
+        VALID_WORKSPACE,
+        """
+        permission: readonly
+        scope:
+          sources: ["Labels/AI"]
+        tools:
+          - get_thread
+          - draft_reply
+        """,
+    )
+    with pytest.raises(ValidationError, match="read-write"):
+        load_workspace(path)
+
+
+def test_tools_allowlist_send_needs_allow_smtp(tmp_path):
+    path = write_workspace(
+        tmp_path,
+        VALID_WORKSPACE,
+        """
+        permission: read-write
+        scope:
+          sources: ["Labels/AI"]
+        write_targets:
+          drafts: Drafts
+        tools:
+          - draft_reply
+          - send_draft
+        """,
+    )
+    with pytest.raises(ValidationError, match="allow_smtp"):
+        load_workspace(path)
+
+
+def test_tools_allowlist_delete_needs_allow_delete(tmp_path):
+    path = write_workspace(
+        tmp_path,
+        VALID_WORKSPACE,
+        """
+        permission: read-write
+        scope:
+          sources: ["Labels/AI"]
+        write_targets:
+          drafts: Drafts
+        tools:
+          - get_thread
+          - delete_message
+        """,
+    )
+    with pytest.raises(ValidationError, match="allow_delete"):
+        load_workspace(path)
+
+
 def test_bridge_cert_fingerprint_is_normalized():
     fp = "AB:CD:" + "ef" * 30  # colons + mixed case, 64 hex digits total (4 + 60)
     account = AccountConfig(username="me@proton.me", bridge_cert_sha256=fp)

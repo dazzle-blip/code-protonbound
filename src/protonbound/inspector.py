@@ -134,6 +134,7 @@ def _cmd_info(workspace: Workspace, _rest: list[str], *, raw: bool) -> None:
         "local_attachments_enabled": mail.allow_local_attachments,
         "max_attachment_mb": mail.max_attachment_mb,
         "bridge_cert_pinned": bool(workspace.meta.account.bridge_cert_sha256),
+        "tools_allowlist": mail.tools,
     }
     _emit("get_workspace_info", data, raw=raw)
 

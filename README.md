@@ -292,18 +292,51 @@ Add **one entry per workspace** to your client config (e.g. Claude Desktop's
 | `readonly`   | ✅    | ❌                    | ❌ by default |
 | `read-write` | ✅    | ✅                    | ❌ by default |
 
+This table shows what each tier **permits**, not what is exposed. The actual tool surface is
+deny-first: a tool appears only if it is listed in `tools:` *and* its tier/flag prerequisite is
+met (see [the `tools:` allow-list](#the-exact-tool-surface-is-declared-by-tools-deny-first) below).
+
 Sending is a separate opt-in flag, independent of the permission tier:
 
 | `mail:` flag | Default | Effect |
 |---|---|---|
 | `allow_delete: true` | `false` | Enables `delete_message` (needs `write_targets.trash`) |
 | `allow_local_attachments: true` | `false` | Allows attaching local files to drafts |
-| `allow_smtp: true` | `false` | Registers `send_outbound_email` and loads `smtplib` |
+| `allow_smtp: true` | `false` | Registers `send_draft` and loads `smtplib` |
+
+### The exact tool surface is declared by `tools:` (deny-first)
+
+The set of tools exposed to the model is **deny-first**: it is exactly the `tools:` list and
+nothing else — not even `get_workspace_info` unless you list it. The field defaults to an empty
+list, so a workspace that names no tools exposes none (the safe default).
+
+```yaml
+mail:
+  permission: read-write
+  allow_smtp: true
+  scope:
+    sources: [Folders/Outbox-Queue]
+  write_targets:
+    drafts: Drafts
+  tools:                 # the surface is exactly these four tools
+    - list_threads
+    - get_thread
+    - draft_reply
+    - send_draft
+```
+
+The list **narrows; it never grants.** A tool may be listed only if its prerequisite is
+enabled — write tools need `permission: read-write`, `delete_message` needs `allow_delete`,
+`send_draft` needs `allow_smtp` — and the config fails to load otherwise (an unknown tool name is
+rejected too, so a typo fails loudly). So the exposed surface is always `(tier/flag-permitted) ∩
+(tools list)`: the capability gates still apply, and the list picks which permitted tools the
+model actually sees. The committed `workspaces/example-clients.yaml` lists the full read +
+draft/housekeeping surface as a starting point — trim it to expose less.
 
 ## Enabling outbound SMTP (opt-in)
 
 By default ProtonBound has no send capability: `smtplib` is never imported and
-`send_outbound_email` is never registered. To enable it for a workspace, add `allow_smtp:
+`send_draft` is never registered. To enable it for a workspace, add `allow_smtp:
 true` to the `mail:` section:
 
 ```yaml
@@ -316,16 +349,28 @@ mail:
     drafts: Drafts
 ```
 
-When enabled the agent gets a `send_outbound_email` tool with `to`, `subject`, `body`, and
-optional `cc`/`bcc` fields. The tool description instructs the agent to obtain explicit user
-confirmation before calling it, since email bodies are attacker-controlled and may contain
-prompt-injection instructions designed to trigger sends.
+When enabled the agent gets a single send tool, **`send_draft`**, which takes **only an opaque
+`draft_id`** — there is deliberately no content-taking send tool. Sending is the second stage of
+a two-step, draft-first flow:
+
+1. Compose with `save_draft` / `draft_reply` / `update_draft`. The message lands in **Drafts**,
+   where the user can review it in their normal Proton client.
+2. Call `send_draft(draft_id)` to send **exactly that draft**, byte-for-byte. There is no
+   `to`/`body` parameter to divert, so what goes out is what was reviewed. On success the draft
+   is removed from Drafts (Proton stores the Sent copy server-side).
+
+Because `send_draft` only references an existing draft by id, a prompt-injection cannot smuggle
+an arbitrary recipient or body through the send call itself — it can at most send a draft that
+already exists and is visible for review. The tool description also instructs the agent to obtain
+explicit user confirmation before calling it. `Bcc` recipients saved on the draft are honoured
+(they receive the mail) but the `Bcc` header is stripped from the transmitted message, as normal
+for a sent email.
 
 **Two independent guards prevent a hijacked agent from sending without `allow_smtp: true`:**
 
 1. **Registration gate** — the tool is never registered when `allow_smtp: false`, so the agent
    has no knowledge of any send capability.
-2. **Runtime guard** — the first line of `send_outbound_email` raises `PermissionError` if
+2. **Runtime guard** — the first line of `send_draft` raises `PermissionError` if
    `allow_smtp` is `false` at call time, independent of how the function was reached.
 
 Bridge SMTP connection settings default to `127.0.0.1:1025` and can be overridden under
@@ -354,9 +399,10 @@ mail:
     Acme Co — contact@example.com
 ```
 
-When set, `draft_reply` / `save_draft` / `update_draft` / `send_outbound_email` take an
+When set, `draft_reply` / `save_draft` / `update_draft` take an
 `append_signature` flag (default **true**) that appends it below the body under the RFC 3676
-`-- ` delimiter. The text is added **verbatim by code** — the model never authors or edits the
+`-- ` delimiter. (`send_draft` needs no such flag — it sends a draft whose signature was already
+applied when it was composed.) The text is added **verbatim by code** — the model never authors or edits the
 signature, it only chooses whether to include it (e.g. omitting it on a terse internal reply).
 With no `signature` configured the flag is a no-op.
 
