@@ -25,7 +25,7 @@ sender string is text an outsider chose. An agent that reads your mail can be st
 a malicious message (*indirect prompt injection*) into misusing whatever tools it holds.
 ProtonBound's design goal is not "trust the model" but to **bound what a fully-hijacked
 agent can do** — so the worst case stays small and recoverable. In the default posture
-that worst case is *a draft you review*, never mail that left your machine.
+that worst case is *a draft you review*, never mail.
 
 ## What it does
 
