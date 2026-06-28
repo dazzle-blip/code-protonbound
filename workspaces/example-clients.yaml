@@ -34,6 +34,13 @@ mail:
   #   read-write -> the above plus drafting and housekeeping (still never sends)
   permission: read-write
 
+  # Optional drafting voice/style guidance (read-write only). Rendered into the always-on
+  # instructions next to the draft guidance, so every reply is authored this way. Keep it to
+  # HOW to write (tone, sign-off, CC policy); WHEN to use the workspace belongs in
+  # `description` above. Omit to add no voice line.
+  voice: >
+    Professional, concise, and friendly. Address the client by name and sign off with your name.
+
   # What the agent may READ. Deny-by-default with combination (AND) semantics: a message is
   # in scope only if it is in an allowed source AND (if set) matches the address allow-list
   # AND (if require_starred) is starred.
@@ -103,7 +110,7 @@ mail:
   tools:
     - get_workspace_info
     - list_folders
-    - list_threads
+    - digest
     - get_thread
     - get_message
     - search_mail

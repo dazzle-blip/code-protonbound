@@ -111,7 +111,7 @@ class WriteTargets(BaseModel):
 TOOL_GATES: dict[str, str] = {
     "get_workspace_info": "read",
     "list_folders": "read",
-    "list_threads": "read",
+    "digest": "read",
     "get_thread": "read",
     "get_message": "read",
     "search_mail": "read",
@@ -151,6 +151,12 @@ class MailConfig(BaseModel):
     # appended verbatim by code — the model never authors or edits it, it only passes a bool
     # choosing whether to include it. Unset => no signature is ever added.
     signature: str | None = None
+    # Optional, workspace-defined drafting voice/style guidance. When set on a read-write
+    # workspace it is rendered into the always-on server ``instructions`` (next to the draft
+    # guidance), so every reply composed here is authored in this voice. Keep it to *how* to
+    # write (tone, sign-off, CC policy) — *when* to use the workspace belongs in ``description``.
+    # Unset => no voice line is added.
+    voice: str | None = None
     # Explicit allow-list of the exact tools to expose to the model. DENY-FIRST: the surface is
     # exactly the tools named here and nothing else — not even get_workspace_info unless listed.
     # The default is an empty list, so a workspace that names no tools exposes none (the safe

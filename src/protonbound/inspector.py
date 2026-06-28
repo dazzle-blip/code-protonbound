@@ -98,7 +98,9 @@ Commands  (same interface the MCP server exposes to the LLM)
 ─────────────────────────────────────────────────────────────
   info                             get_workspace_info
   folders                          list_folders
-  threads [--limit N]              list_threads  (default limit 50)
+  digest [--limit N] [--all]       digest  (thread list; default unread-only, limit 20)
+    [--days N] [--no-snippets]       --all: include read threads; --no-snippets: header-only
+    [--source MAILBOX]               --source: restrict to one in-scope folder/label
   thread  <thread_id>              get_thread     — folded, de-duped bodies
   message <message_id>             get_message    — full un-folded body
   search  [QUERY] [options]        search_mail
@@ -145,11 +147,28 @@ def _cmd_folders(client: ProtonMailClient, _rest: list[str], *, raw: bool) -> No
 
 
 def _cmd_threads(client: ProtonMailClient, rest: list[str], *, raw: bool) -> None:
-    p = argparse.ArgumentParser(prog="threads", add_help=False)
-    p.add_argument("--limit", type=int, default=50)
+    p = argparse.ArgumentParser(prog="digest", add_help=False)
+    p.add_argument("--limit", type=int, default=20)
+    p.add_argument("--days", dest="since_days", type=int, default=None)
+    p.add_argument("--source", dest="source", default=None)
+    p.add_argument("--all", dest="unread_only", action="store_false")
+    p.add_argument("--no-snippets", dest="with_snippets", action="store_false")
     ns, _ = p.parse_known_args(rest)
-    data = client.list_threads(limit=ns.limit)
-    _emit(f"list_threads(limit={ns.limit})  [{len(data)} thread(s)]", data, raw=raw)
+    data = client.digest(
+        unread_only=ns.unread_only,
+        since_days=ns.since_days,
+        limit=ns.limit,
+        with_snippets=ns.with_snippets,
+        source=ns.source,
+    )
+    parts = [f"limit={ns.limit}", f"unread_only={ns.unread_only}"]
+    if ns.since_days:
+        parts.append(f"since_days={ns.since_days}")
+    if ns.source:
+        parts.append(f"source={ns.source!r}")
+    if not ns.with_snippets:
+        parts.append("with_snippets=False")
+    _emit(f"digest({', '.join(parts)})  [{len(data)} thread(s)]", data, raw=raw)
 
 
 def _cmd_thread(client: ProtonMailClient, rest: list[str], *, raw: bool) -> None:
@@ -280,7 +299,7 @@ def _dispatch(
         _cmd_info(workspace, rest, raw=raw)
     elif cmd == "folders":
         _cmd_folders(client, rest, raw=raw)
-    elif cmd == "threads":
+    elif cmd in ("digest", "threads"):
         _cmd_threads(client, rest, raw=raw)
     elif cmd == "thread":
         _cmd_thread(client, rest, raw=raw)

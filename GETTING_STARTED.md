@@ -171,7 +171,7 @@ mail:
   write_targets:
     drafts: Drafts
   tools:                 # the surface is exactly these four tools
-    - list_threads
+    - digest
     - get_thread
     - draft_reply
     - send_draft

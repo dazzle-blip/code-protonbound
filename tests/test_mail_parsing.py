@@ -3,7 +3,7 @@
 These pin the exact wire shapes imaplib hands back, including the Proton Bridge layout
 that emits ``UID`` *after* the body literal — which imaplib returns as a separate,
 non-tuple list element. Before this was handled, every message was silently dropped and
-``list_threads`` came back empty against a real Bridge.
+thread listing came back empty against a real Bridge.
 """
 
 from __future__ import annotations

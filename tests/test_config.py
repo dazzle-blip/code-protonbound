@@ -241,12 +241,12 @@ def test_tools_allowlist_valid_subset_loads(tmp_path):
         write_targets:
           drafts: Drafts
         tools:
-          - list_threads
+          - digest
           - get_thread
           - draft_reply
         """,
     )
-    assert load_workspace(path).mail.tools == ["list_threads", "get_thread", "draft_reply"]
+    assert load_workspace(path).mail.tools == ["digest", "get_thread", "draft_reply"]
 
 
 def test_tools_allowlist_empty_list_loads(tmp_path):
@@ -274,7 +274,7 @@ def test_tools_allowlist_unknown_name_rejected(tmp_path):
         scope:
           sources: ["Labels/AI"]
         tools:
-          - list_threads
+          - digest
           - send_everything
         """,
     )
@@ -335,6 +335,33 @@ def test_tools_allowlist_delete_needs_allow_delete(tmp_path):
     )
     with pytest.raises(ValidationError, match="allow_delete"):
         load_workspace(path)
+
+
+def test_voice_field_loads_and_defaults_to_none(tmp_path):
+    none_path = write_workspace(
+        tmp_path,
+        VALID_WORKSPACE,
+        """
+        permission: readonly
+        scope:
+          sources: ["Labels/AI"]
+        """,
+    )
+    assert load_workspace(none_path).mail.voice is None
+
+    set_path = write_workspace(
+        tmp_path,
+        VALID_WORKSPACE,
+        """
+        permission: read-write
+        scope:
+          sources: ["Labels/AI"]
+        write_targets:
+          drafts: Drafts
+        voice: "Warm, concise, first person."
+        """,
+    )
+    assert load_workspace(set_path).mail.voice == "Warm, concise, first person."
 
 
 def test_bridge_cert_fingerprint_is_normalized():

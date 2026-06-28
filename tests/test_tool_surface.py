@@ -41,6 +41,7 @@ def _workspace(
     allow_local_attachments: bool = False,
     allow_smtp: bool = False,
     tools=_TIER,
+    voice: str | None = None,
 ) -> Workspace:
     if tools is _TIER:
         tools = _permitted_tools(permission, allow_delete, allow_smtp)
@@ -58,6 +59,7 @@ def _workspace(
             allow_local_attachments=allow_local_attachments,
             allow_smtp=allow_smtp,
             tools=tools,
+            voice=voice,
         ),
         path=Path("."),
     )
@@ -72,13 +74,20 @@ def _tool_names(workspace: Workspace) -> set[str]:
 def test_readonly_has_no_write_tools():
     names = _tool_names(_workspace(Permission.readonly))
     assert "get_workspace_info" in names
-    assert "list_threads" in names
+    assert "digest" in names
     assert "get_thread" in names
     # no write tools at all
     assert "draft_reply" not in names
     assert "save_draft" not in names
     assert "move_message" not in names
     assert "delete_message" not in names
+
+
+def test_digest_is_a_read_tool():
+    """digest is a read-tier triage tool, available even in a readonly workspace."""
+
+    names = _tool_names(_workspace(Permission.readonly))
+    assert "digest" in names
 
 
 def test_read_write_has_draft_tools_but_no_send_by_default():
@@ -104,16 +113,16 @@ def test_allowlist_exposes_exactly_the_listed_tools():
     ws = _workspace(
         Permission.read_write,
         allow_smtp=True,
-        tools=["list_threads", "get_thread", "draft_reply", "send_draft"],
+        tools=["digest", "get_thread", "draft_reply", "send_draft"],
     )
-    assert _tool_names(ws) == {"list_threads", "get_thread", "draft_reply", "send_draft"}
+    assert _tool_names(ws) == {"digest", "get_thread", "draft_reply", "send_draft"}
 
 
 def test_allowlist_can_exclude_get_workspace_info():
     """Nothing is implicit — even get_workspace_info only appears if listed."""
 
-    assert _tool_names(_workspace(Permission.readonly, tools=["list_threads"])) == {
-        "list_threads"
+    assert _tool_names(_workspace(Permission.readonly, tools=["digest"])) == {
+        "digest"
     }
 
 
@@ -187,7 +196,7 @@ def test_tool_annotations_mark_read_vs_write_vs_send():
     tools = {t.name: t for t in asyncio.run(server.list_tools())}
 
     # read tools are flagged read-only
-    for name in ("list_threads", "get_thread", "get_message", "search_mail", "list_folders"):
+    for name in ("digest", "get_thread", "get_message", "search_mail", "list_folders"):
         assert tools[name].annotations.readOnlyHint is True, name
 
     # writes are not read-only and disclaim the open world (local mailbox only)
@@ -299,6 +308,26 @@ def test_readonly_instructions_omit_write_limits():
     text = _workspace_instructions(_workspace(Permission.readonly), can_send=False)
     assert "Attachments:" not in text
     assert "delete" not in text.lower()
+
+
+def test_voice_renders_into_read_write_instructions():
+    """A configured voice is advertised in the always-on instructions, by the draft guidance."""
+
+    ws = _workspace(Permission.read_write, voice="Warm and concise. Sign off as Sam.")
+    text = _workspace_instructions(ws, can_send=False)
+    assert "Draft in this workspace's voice: Warm and concise. Sign off as Sam." in text
+
+
+def test_voice_absent_from_readonly_instructions():
+    """A readonly workspace never drafts, so the voice line is not rendered even if set."""
+
+    ws = _workspace(Permission.readonly, voice="Warm and concise.")
+    assert "voice" not in _workspace_instructions(ws, can_send=False).lower()
+
+
+def test_no_voice_line_when_unset():
+    text = _workspace_instructions(_workspace(Permission.read_write), can_send=False)
+    assert "Draft in this workspace's voice" not in text
 
 
 def test_password_provider_prefers_keyring_then_env(monkeypatch):

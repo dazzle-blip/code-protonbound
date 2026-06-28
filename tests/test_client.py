@@ -760,7 +760,7 @@ def test_get_thread_returns_folded_skeletons():
         ]}
     )
     client = _client(fake, sources=[SRC])
-    client._issued_ids.add("<a@x>")  # as list_threads would have issued the thread id
+    client._issued_ids.add("<a@x>")  # as digest would have issued the thread id
 
     bodies = [m["body"] for m in client.get_thread("<a@x>")["messages"]]
     assert "Are you free Saturday?" in bodies[0]       # original, kept whole
@@ -778,6 +778,143 @@ def test_get_message_returns_full_body():
     # get_message is the un-folded Tier 2 view: the quoted history is present.
     assert "Are you free Saturday?" in msg["body"]
     assert "Sounds good." in msg["body"]
+
+
+# -- digest: one-call triage with deterministic snippets ------------------------------
+
+
+def test_digest_lists_only_unread_threads_with_snippet():
+    mailboxes = {
+        SRC: [
+            {"uid": "1", "raw": _msg("<a@x>", subject="Interview",
+                                     body="Can you meet Tuesday?"), "flags": set()},
+            {"uid": "2", "raw": _msg("<b@x>", subject="Old news",
+                                     body="already seen"), "flags": {"\\Seen"}},
+        ],
+    }
+    client = _client(_FakeIMAP(mailboxes), sources=[SRC])
+
+    rows = client.digest()  # unread_only defaults True
+
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["subject"] == "Interview"
+    assert row["unread_count"] == 1
+    assert row["message_count"] == 1
+    assert row["has_attachments"] is False
+    assert row["thread_id"] in client._issued_ids  # drillable via get_thread
+    assert "Can you meet Tuesday?" in row["snippet"]
+    assert "untrusted external sender" in row["snippet"]  # snippet is fenced
+
+
+def test_digest_includes_read_threads_when_not_unread_only():
+    mailboxes = {
+        SRC: [
+            {"uid": "1", "raw": _msg("<a@x>", body="unread body"), "flags": set()},
+            {"uid": "2", "raw": _msg("<b@x>", body="read body"), "flags": {"\\Seen"}},
+        ],
+    }
+    client = _client(_FakeIMAP(mailboxes), sources=[SRC])
+
+    rows = client.digest(unread_only=False)
+
+    assert len(rows) == 2
+    assert {r["unread_count"] for r in rows} == {0, 1}
+
+
+def test_digest_snippet_is_truncated_to_snippet_chars():
+    long_body = "word " * 200  # ~1000 chars once collapsed
+    mailboxes = {SRC: [{"uid": "1", "raw": _msg("<a@x>", body=long_body), "flags": set()}]}
+    client = _client(_FakeIMAP(mailboxes), sources=[SRC])
+
+    snippet = client.digest(snippet_chars=40)[0]["snippet"]
+
+    inner = snippet.split("<untrusted-email-content>\n", 1)[1]
+    inner = inner.split("\n</untrusted-email-content>", 1)[0]
+    assert len(inner) <= 41  # bounded to snippet_chars (+ the ellipsis)
+    assert inner.endswith("…")
+
+
+def test_digest_snippet_comes_from_the_latest_message():
+    older = _msg("<a@x>", subject="Plan", body="first message")  # Mon 1 Jan 2024
+    newer = (
+        b"From: bob@x\r\nTo: team@example.com\r\nSubject: Re: Plan\r\n"
+        b"Message-ID: <b@x>\r\nReferences: <a@x>\r\n"  # threads onto <a@x>
+        b"Date: Tue, 2 Jan 2024 00:00:00 +0000\r\n\r\nlatest reply text"
+    )
+    mailboxes = {SRC: [
+        {"uid": "1", "raw": older, "flags": set()},
+        {"uid": "2", "raw": newer, "flags": set()},
+    ]}
+    client = _client(_FakeIMAP(mailboxes), sources=[SRC])
+
+    rows = client.digest()
+
+    assert len(rows) == 1                       # one thread, two messages
+    assert rows[0]["message_count"] == 2
+    assert "latest reply text" in rows[0]["snippet"]
+    assert "first message" not in rows[0]["snippet"]
+
+
+def test_digest_empty_when_nothing_unread():
+    mailboxes = {SRC: [{"uid": "1", "raw": _msg("<a@x>"), "flags": {"\\Seen"}}]}
+    client = _client(_FakeIMAP(mailboxes), sources=[SRC])
+
+    assert client.digest() == []
+
+
+def test_digest_header_only_omits_snippet_and_fetches_no_body():
+    """with_snippets=False mimics the old list_threads: header fields only, no body fetch."""
+
+    mailboxes = {SRC: [{"uid": "1", "raw": _msg("<a@x>", subject="Plan",
+                                                body="should not be fetched"), "flags": set()}]}
+    fake = _FakeIMAP(mailboxes)
+    client = _client(fake, sources=[SRC])
+
+    # Trip a failure if a full-body FETCH (BODY.PEEK[]) is issued for the snippet.
+    real_uid = fake.uid
+
+    def _guarded_uid(command, *args):
+        if command.upper() == "FETCH" and any("BODY.PEEK[]" in str(a) for a in args):
+            raise AssertionError("header-only digest must not fetch message bodies")
+        return real_uid(command, *args)
+
+    fake.uid = _guarded_uid
+
+    rows = client.digest(unread_only=False, with_snippets=False)
+
+    assert len(rows) == 1
+    row = rows[0]
+    assert set(row) == {
+        "thread_id", "subject", "mailbox", "last_from", "last_date",
+        "message_count", "unread_count",
+    }
+    assert "snippet" not in row and "has_attachments" not in row
+    assert row["unread_count"] == 1  # unread_count is still free from the header
+
+
+def test_digest_source_filter_restricts_to_one_in_scope_folder():
+    other = "Folders/Other"
+    mailboxes = {
+        SRC: [{"uid": "1", "raw": _msg("<a@x>", subject="In src"), "flags": set()}],
+        other: [{"uid": "2", "raw": _msg("<b@x>", subject="In other"), "flags": set()}],
+    }
+    client = _client(_FakeIMAP(mailboxes), sources=[SRC, other])
+
+    only_other = client.digest(source=other)
+    assert [r["subject"] for r in only_other] == ["In other"]
+    assert only_other[0]["mailbox"] == other
+
+    # Without the filter, both in-scope folders are digested.
+    assert {r["subject"] for r in client.digest()} == {"In src", "In other"}
+
+
+def test_digest_rejects_source_outside_scope():
+    mailboxes = {SRC: [{"uid": "1", "raw": _msg("<a@x>"), "flags": set()}]}
+    client = _client(_FakeIMAP(mailboxes), sources=[SRC])
+
+    with pytest.raises(mailmod.scope_mod.ScopeError):
+        client.digest(source="Folders/NotMine")
 
 
 # -- #9: session id whitelist ---------------------------------------------------------
