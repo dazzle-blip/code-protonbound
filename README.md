@@ -25,7 +25,7 @@ sender string is text an outsider chose. An agent that reads your mail can be st
 a malicious message (*indirect prompt injection*) into misusing whatever tools it holds.
 ProtonBound's design goal is not "trust the model" but to **bound what a fully-hijacked
 agent can do** — so the worst case stays small and recoverable. In the default posture
-that worst case is *a draft you review*, never mail that left your machine.
+that worst case is *a draft you review*, never mail.
 
 ## What it does
 
@@ -68,17 +68,15 @@ entry below is rated against them:
   quoted history, so far fewer tokens reach the model (cheaper, and a smaller surface for
   content-borne tricks). Most others return raw HTML and full quoted chains.
 
-In each entry below, *"Where it's weaker"* describes **that server's** limitations
-relative to ProtonBound — not ProtonBound's.
 
 ### Proton-specific
 
-**`proton-bridge-mcp`** — closest design peer (Python, Proton Bridge).
+**[`proton-bridge-mcp`](https://github.com/miketigerblue/proton-bridge-mcp)** — closest design peer (Python, Proton Bridge).
 - *Strengths:* same Python/Bridge approach; **automatic TLS cert pinning** (trust-on-
   first-use — it records Bridge's cert the first time it connects and rejects changes
   after); requires you to pass an explicit acknowledgement flag before it will delete or
   move mail.
-- *Where it's weaker:* it sends over SMTP directly, with no draft-first review step; it
+- *Where it's weaker:* it sends over SMTP, with no draft-first with optional send step; it
   exposes the **full mailbox** with no folder/address scoping or per-process isolation
   (*scoping*); it does not fence untrusted bodies (*injection*); it returns HTML as-is
   with no Markdown/quote trimming (*tokens*). Its first-use pinning also trusts whatever
