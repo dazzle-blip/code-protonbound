@@ -73,7 +73,7 @@ relative to ProtonBound — not ProtonBound's.
 
 ### Proton-specific
 
-**`proton-bridge-mcp`** — closest design peer (Python, Proton Bridge).
+**[`proton-bridge-mcp`](https://github.com/miketigerblue/proton-bridge-mcp)** — closest design peer (Python, Proton Bridge).
 - *Strengths:* same Python/Bridge approach; **automatic TLS cert pinning** (trust-on-
   first-use — it records Bridge's cert the first time it connects and rejects changes
   after); requires you to pass an explicit acknowledgement flag before it will delete or
