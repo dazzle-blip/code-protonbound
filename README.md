@@ -68,8 +68,6 @@ entry below is rated against them:
   quoted history, so far fewer tokens reach the model (cheaper, and a smaller surface for
   content-borne tricks). Most others return raw HTML and full quoted chains.
 
-In each entry below, *"Where it's weaker"* describes **that server's** limitations
-relative to ProtonBound — not ProtonBound's.
 
 ### Proton-specific
 
@@ -78,7 +76,7 @@ relative to ProtonBound — not ProtonBound's.
   first-use — it records Bridge's cert the first time it connects and rejects changes
   after); requires you to pass an explicit acknowledgement flag before it will delete or
   move mail.
-- *Where it's weaker:* it sends over SMTP directly, with no draft-first review step; it
+- *Where it's weaker:* it sends over SMTP, with no draft-first with optional send step; it
   exposes the **full mailbox** with no folder/address scoping or per-process isolation
   (*scoping*); it does not fence untrusted bodies (*injection*); it returns HTML as-is
   with no Markdown/quote trimming (*tokens*). Its first-use pinning also trusts whatever
